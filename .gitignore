@@ -1,0 +1,42 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+.venv/
+dgab/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_convert/
+
+# VS Code
+.vscode/
+
+# MacOS
+.DS_Store
+
+# Logs
+*.log
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Data files (optional)
+*.csv
+*.npz
+*.npy
+*.h5
+*.png
+
+# Large binary files
+*.dylib
+*.so
+*.exe
+*.zip
