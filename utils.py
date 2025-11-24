@@ -1468,8 +1468,8 @@ def generate_feasible_qcqp_l1(n, N, rng, neighbors_list=None, max_adjustment_ite
     """
     Generate a feasible QCQP problem with L1 regularization and node-specific objectives/constraints.
     
-    Centralized objective: ||x||_1 + (1/2) * sum_{i in N} x^T Q^i x
-    Per-node objective: (1/N) * ||x||_1 + (1/2) * x^T Q^i x
+    Centralized objective: ||x||_1 + (1/2) * sum_{i in N} x^T Q^i x + sum_{i in N} q_i^T x
+    Per-node objective: (1/N) * ||x||_1 + (1/2) * x^T Q^i x + q_i^T x
     
     where Q^i = V^i * Gamma^i * (V^i)^T:
     - V^i is a random orthonormal matrix (V^i * (V^i)^T = I)
@@ -1779,6 +1779,106 @@ def generate_feasible_qcqp_l1(n, N, rng, neighbors_list=None, max_adjustment_ite
             # Continue with generated problem
         
         return Q_list, lambda_l1, A_list, b_list, c_list
+
+
+def generate_feasible_qp_l1(n, N, rng, neighbors_list=None):
+    """
+    Generate a feasible QP problem with L1 regularization and node-specific objectives.
+    This uses the same objective generation logic as generate_feasible_qcqp_l1, but without constraints.
+    
+    Centralized objective: ||x||_1 + (1/2) * sum_{i in N} x^T Q^i x
+    Per-node objective: (1/N) * ||x||_1 + (1/2) * x^T Q^i x
+    
+    where Q^i = V^i * Gamma^i * (V^i)^T:
+    - V^i is a random orthonormal matrix (V^i * (V^i)^T = I)
+    - Gamma^i is a diagonal matrix with:
+      * First diagonal element: 5 * i (i from 1 to N)
+      * Last two diagonal elements: 0
+      * Third-to-last diagonal element: 1
+      * Remaining n-4 elements: uniformly sampled from [1, 5*i]
+      * All elements sorted in decreasing order
+    
+    Parameters:
+    -----------
+    n : int
+        Dimension of decision variable
+    N : int
+        Number of nodes
+    rng : np.random.Generator
+        Random number generator
+    neighbors_list : list, optional
+        Not used, kept for API consistency.
+        
+    Returns:
+    --------
+    Q_list : list of np.ndarray
+        List of node-specific quadratic coefficient matrices Q^i (n x n)
+    q_list : list of np.ndarray
+        List of node-specific linear coefficient vectors q_i (n,)
+    lambda_l1 : float
+        L1 regularization coefficient (1/N)
+    """
+    # L1 regularization coefficient
+    lambda_l1 = 1.0 / N
+    
+    # Generate Q^i = V^i * Gamma^i * (V^i)^T for each node i
+    Q_list = []
+    for i in range(N):
+        node_idx = i + 1  # i from 1 to N
+        
+        # Generate random orthonormal matrix V^i
+        V_i = random_orthonormal(n, rng)
+        
+        # Generate Gamma^i diagonal elements
+        gamma_diag = np.zeros(n)
+        
+        if n >= 4:
+            # First element: 5 * i
+            gamma_diag[0] = 5.0 * node_idx
+            # gamma_diag[0] = 2.0 * node_idx
+            
+            # Last two elements: 0
+            gamma_diag[n-1] = 0.0
+            gamma_diag[n-2] = 0.0
+            
+            # Third-to-last element: 1
+            gamma_diag[n-3] = 1.0
+            
+            # Remaining n-4 elements: uniformly sampled from [1, 5*i]
+            if n > 4:
+                gamma_diag[1:n-3] = rng.uniform(1.0, 5.0 * node_idx, size=n-4)
+                # gamma_diag[1:n-3] = rng.uniform(1.0, 2.0 * node_idx, size=n-4)
+        elif n == 3:
+            # For n=3: first=5*i, last two=0,1
+            gamma_diag[0] = 5.0 * node_idx
+            gamma_diag[1] = 1.0
+            gamma_diag[2] = 0.0
+        elif n == 2:
+            # For n=2: first=5*i, last=0
+            gamma_diag[0] = 5.0 * node_idx
+            gamma_diag[1] = 0.0
+        else:  # n == 1
+            # For n=1: just 5*i
+            gamma_diag[0] = 5.0 * node_idx
+        
+        # Sort in decreasing order
+        gamma_diag = np.sort(gamma_diag)[::-1]
+        
+        # Construct Gamma^i
+        Gamma_i = np.diag(gamma_diag)
+        
+        # Construct Q^i = V^i * Gamma^i * (V^i)^T
+        Q_i = V_i @ Gamma_i @ V_i.T
+        # Ensure symmetry
+        Q_i = 0.5 * (Q_i + Q_i.T)
+        
+        Q_list.append(Q_i)
+    
+    # Generate q_list with small random linear terms
+    q_scale = 0.1
+    q_list = [rng.standard_normal(n) * q_scale for _ in range(N)]
+    
+    return Q_list, q_list, lambda_l1
 
 
 def solve_qcqp_l1_ground_truth(Q_agg, lambda_l1, A_list, b_list, c_list, neighbors_list=None, verbose=True):
@@ -2473,4 +2573,5 @@ def build_empty_constraints(num_nodes: int):
     Each tuple is (A_list_i, b_list_i, c_list_i); we use empty lists.
     """
     return [([], [], []) for _ in range(num_nodes)]
+
 

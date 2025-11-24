@@ -23,7 +23,7 @@ sys.modules["aldo"] = aldo
 spec_aldo.loader.exec_module(aldo)
 
 # Import QP with L1 problem generation functions from utils
-from utils import generate_qp_with_l1, solve_qp_l1_ground_truth, build_empty_constraints
+from utils import generate_feasible_qp_l1, solve_qp_l1_ground_truth, build_empty_constraints
 
 # --------------------------
 # Main comparison function
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     np.set_printoptions(precision=4, suppress=True)
     
     # Problem configuration
-    main_seed = 42
+    main_seed = 2025
     solver_seed = 789
     
     rng = np.random.default_rng(main_seed)
@@ -41,8 +41,6 @@ if __name__ == "__main__":
     n = 20
     N = 12
     E = 24
-    
-    lambda_l1 = 0.1  # L1 regularization parameter
     
     # Algorithm parameters
     gamma = None
@@ -62,7 +60,9 @@ if __name__ == "__main__":
     print("Generating QP Problem with L1 Regularization")
     print("="*80)
     
-    Q_list, q_list, lambda_l1 = generate_qp_with_l1(n, N, rng, lambda_l1)
+    # Use generate_feasible_qp_l1 (with linear terms)
+    Q_list, q_list, lambda_l1 = generate_feasible_qp_l1(n, N, rng)
+    
     # Aggregate objective for ground truth solving: A0 = (1/N) * sum(Q_i), b0 = (1/N) * sum(q_i)
     A0_agg = np.mean(Q_list, axis=0)
     b0_agg = np.mean(q_list, axis=0)
@@ -83,36 +83,41 @@ if __name__ == "__main__":
     print(f"x* norm: {np.linalg.norm(x_star):.6f}")
     print(f"x* l1 norm: {np.linalg.norm(x_star, 1):.6f}")
     
-    # Compute parameters
-    L_obj = dapd.compute_lipschitz_constant(A0_agg, b0_agg)
-    # For L1 problem: L_{f_i} = L_obj / N (same for all nodes)
-    L_f_i = L_obj / N
-    max_L_f_i = L_f_i  # All nodes have the same L_f_i
+    # Compute per-node Lipschitz constants L_{f_i} = ||Q_i||_2
+    L_f_i_list = []
+    for i, Q_i in enumerate(Q_list):
+        L_val = np.linalg.norm(Q_i, ord=2)
+        if L_val < 1e-12:
+            L_val = 1e-12  # Prevent division by zero
+        L_f_i_list.append(L_val)
+    max_L_f_i = max(L_f_i_list)
+    min_L_f_i = min(L_f_i_list)
+    mean_L_f_i = float(np.mean(L_f_i_list))
+    print(f"L_f_i_list: {L_f_i_list}")
     
     # D-APD: tau_i = 1 / L_{f_i} for each node
-    tau_dapd_per_node = 1.0 / L_f_i
-    tau_dapd = tau_dapd_per_node  # Same for all nodes
+    tau_dapd_list = [1.0 / L_val for L_val in L_f_i_list]
     
-    # D-APDB: tau_i = constant / L_{f_i} for each node
-    tau_multiplier = 10 # Hyperparameter for D-APDB
-    tau_dapdb_per_node = tau_multiplier / L_f_i
-    tau_dapdb = tau_dapdb_per_node  # Same for all nodes
+    # D-APDB: tau_i = tau_multiplier / L_{f_i} for each node
+    tau_multiplier = 5  # Hyperparameter for D-APDB
+    tau_dapdb_list = [tau_multiplier / L_val for L_val in L_f_i_list]
     
     # ALDO: alpha_init = constant / max{L_{f_i}}
-    alpha_init_constant = 1.0  # Hyperparameter for ALDO
+    alpha_init_constant = 5.0  # Hyperparameter for ALDO
     alpha_init_aldo = alpha_init_constant / max_L_f_i
     
-    # Compute gamma for D-APD
+    # Compute gamma for D-APD (use largest tau_i for conservative bound)
     temp_d_max = max(len(neighbors_list[i]) for i in range(N))
-    temp_sigma0_max = zeta * tau_dapd
+    tau_dapd_max = max(tau_dapd_list)
+    temp_sigma0_max = zeta * tau_dapd_max
     computed_gamma_dapd = 1.0 / (2.0 * temp_d_max * temp_sigma0_max * N * ((2.0 / c_alpha) + (1.0 / c_c)))
     
     print(f"\nComputed parameters:")
-    print(f"  L_obj = {L_obj:.6f}, L_f_i = {L_f_i:.6f} (same for all nodes)")
-    print(f"  max{{L_f_i}} = {max_L_f_i:.6f}")
+    print(f"  L_obj (aggregated) = {dapd.compute_lipschitz_constant(A0_agg, b0_agg):.6f}")
+    print(f"  L_f_i stats -> min: {min_L_f_i:.6f}, max: {max_L_f_i:.6f}, mean: {mean_L_f_i:.6f}")
     print(f"\nInitial step sizes:")
-    print(f"  D-APD: tau_i = 1 / L_f_i = {tau_dapd:.6e}")
-    print(f"  D-APDB: tau_i = {tau_multiplier} / L_f_i = {tau_dapdb:.6e} (tau_multiplier = {tau_multiplier})")
+    print(f"  D-APD: tau_i = 1 / L_f_i (min={min(tau_dapd_list):.6e}, max={max(tau_dapd_list):.6e})")
+    print(f"  D-APDB: tau_i = {tau_multiplier} / L_f_i (min={min(tau_dapdb_list):.6e}, max={max(tau_dapdb_list):.6e})")
     print(f"  ALDO: alpha_init = {alpha_init_constant} / max{{L_f_i}} = {alpha_init_aldo:.6e} (alpha_init_constant = {alpha_init_constant})")
     print(f"\nOther parameters:")
     print(f"  D-APD gamma = {computed_gamma_dapd:.6e}")
@@ -147,16 +152,17 @@ if __name__ == "__main__":
         if sim_idx == 0:
             print("Running D-APD Solver...")
         x_bar_dapd, hist_dapd = dapd.d_apd_qcqp_merely_convex(
-            A0_agg, b0_agg, pernode_constraints, None, None,
+            A0_agg, b0_agg, None, pernode_constraints, None, None,
             Q_list=Q_list, q_list=q_list,  # Node-specific objectives
             N=N, max_iter=max_iter, seed=sim_seed,
             c_alpha=c_alpha, c_beta=c_beta, c_varsigma=c_c,
-            zeta=zeta, tau=tau_dapd, gamma=computed_gamma_dapd,
+            zeta=zeta, tau=None, gamma=computed_gamma_dapd,
             verbose_every=verbose_every if sim_idx == 0 else 0, initial_scale=initial_scale,
-            f_star=f_star, tol=1e-8, normalize_consensus_error=False,
+            phi_star=f_star, tol=1e-8, normalize_consensus_error=False,
             use_optimal_consensus_error=False, x_star=x_star,
             neighbors_list=neighbors_list, initialization_mode=initialization_mode,
-            B_theta=zero_B_theta, lambda_l1=lambda_l1, initial_points=initial_points_list
+            B_theta=zero_B_theta, lambda_l1=lambda_l1, initial_points=initial_points_list,
+            tau_list=tau_dapd_list
         )
         all_hist_dapd.append(hist_dapd)
         all_x_bar_dapd.append(x_bar_dapd)
@@ -165,17 +171,18 @@ if __name__ == "__main__":
         if sim_idx == 0:
             print("Running D-APDB Solver...")
         x_bar_dapdb, hist_dapdb, _ = dapdb.d_apdb_qcqp_merely_convex(
-            A0_agg, b0_agg, pernode_constraints, None, None,
+            A0_agg, b0_agg, None, pernode_constraints, None, None,
             Q_list=Q_list, q_list=q_list,  # Node-specific objectives
             N=N, max_iter=max_iter, seed=sim_seed,
             c_alpha=c_alpha, c_beta=c_beta, c_varsigma=c_c,
-            zeta=zeta, tau_bar=tau_dapdb, gamma=gamma,
+            zeta=zeta, tau_bar=None, gamma=gamma,
             rho_shrink=rho_shrink, delta=delta,
-            f_star=f_star, verbose_every=verbose_every if sim_idx == 0 else 0,
+            phi_star=f_star, verbose_every=verbose_every if sim_idx == 0 else 0,
             initial_scale=initial_scale, neighbors_list=neighbors_list,
             initialization_mode=initialization_mode,
             B_theta=zero_B_theta, lambda_l1=lambda_l1, initial_points=initial_points_list,
-            E_use_gradient_form=True, tau_multiplier=tau_multiplier
+            E_use_gradient_form=True, tau_multiplier=tau_multiplier,
+            tau_list=tau_dapdb_list
         )
         all_hist_dapdb.append(hist_dapdb)
         all_x_bar_dapdb.append(x_bar_dapdb)
@@ -184,15 +191,15 @@ if __name__ == "__main__":
         if sim_idx == 0:
             print("Running ALDO Solver...")
         x_bar_aldo, hist_aldo = aldo.aldo_qcqp_merely_convex(
-            A0_agg, b0_agg, None, None,
-            Q_list=Q_list, q_list=q_list,  # Node-specific objectives
+            A0_agg, b0_agg, 0.0, None, None,
             N=N, max_iter=max_iter, seed=sim_seed,
             alpha_init=None, alpha_init_constant=alpha_init_constant, delta=delta, c=0.3,
             verbose_every=verbose_every if sim_idx == 0 else 0, initial_scale=initial_scale,
-            f_star=f_star, tol=1e-8, normalize_consensus_error=False,
+            phi_star=f_star, tol=1e-8, normalize_consensus_error=False,
             use_optimal_consensus_error=False, x_star=x_star,
             neighbors_list=neighbors_list, initialization_mode=initialization_mode,
-            lambda_l1=lambda_l1, initial_points=initial_points_matrix
+            lambda_l1=lambda_l1, initial_points=initial_points_list,
+            Q_list=Q_list
         )
         all_hist_aldo.append(hist_aldo)
         all_x_bar_aldo.append(x_bar_aldo)
@@ -273,34 +280,49 @@ if __name__ == "__main__":
     grad_calls_dapd, objs_dapd_mean, objs_dapd_std = aggregate_histories(all_hist_dapd, 0)
     _, cons_dapd_mean, cons_dapd_std = aggregate_histories(all_hist_dapd, 2)
     _, subopt_dapd_mean, subopt_dapd_std = aggregate_histories(all_hist_dapd, 4)
-    _, x_bar_norm_sq_dapd_mean, _ = aggregate_histories(all_hist_dapd, 6)  # Index 6 for x_bar_norm_sq
-    _, cons_err_sq_sum_dapd_mean, _ = aggregate_histories(all_hist_dapd, 7)  # Index 7 for cons_err_sq_sum
+    _, x_bar_norm_sq_dapd_mean, x_bar_norm_sq_dapd_std = aggregate_histories(all_hist_dapd, 6)  # Index 6 for x_bar_norm_sq
+    _, cons_err_sq_sum_dapd_mean, cons_err_sq_sum_dapd_std = aggregate_histories(all_hist_dapd, 7)  # Index 7 for cons_err_sq_sum
     
     grad_calls_dapdb, objs_dapdb_mean, objs_dapdb_std = aggregate_histories(all_hist_dapdb, 0)
     _, cons_dapdb_mean, cons_dapdb_std = aggregate_histories(all_hist_dapdb, 2)
     _, subopt_dapdb_mean, subopt_dapdb_std = aggregate_histories(all_hist_dapdb, 4)
     _, backtrack_dapdb_mean, backtrack_dapdb_std = aggregate_histories(all_hist_dapdb, 6)  # Index 6 for backtrack iterations
-    _, x_bar_norm_sq_dapdb_mean, _ = aggregate_histories(all_hist_dapdb, 7)  # Index 7 for x_bar_norm_sq
-    _, cons_err_sq_sum_dapdb_mean, _ = aggregate_histories(all_hist_dapdb, 8)  # Index 8 for cons_err_sq_sum
+    _, x_bar_norm_sq_dapdb_mean, x_bar_norm_sq_dapdb_std = aggregate_histories(all_hist_dapdb, 7)  # Index 7 for x_bar_norm_sq
+    _, cons_err_sq_sum_dapdb_mean, cons_err_sq_sum_dapdb_std = aggregate_histories(all_hist_dapdb, 8)  # Index 8 for cons_err_sq_sum
     
     grad_calls_aldo, objs_aldo_mean, objs_aldo_std = aggregate_histories(all_hist_aldo, 0)
     _, cons_aldo_mean, cons_aldo_std = aggregate_histories(all_hist_aldo, 2)
     _, subopt_aldo_mean, subopt_aldo_std = aggregate_histories(all_hist_aldo, 4)
     _, backtrack_aldo_mean, backtrack_aldo_std = aggregate_histories(all_hist_aldo, 6)  # Index 6 for backtrack iterations
-    _, x_bar_norm_sq_aldo_mean, _ = aggregate_histories(all_hist_aldo, 7)  # Index 7 for x_bar_norm_sq
-    _, cons_err_sq_sum_aldo_mean, _ = aggregate_histories(all_hist_aldo, 8)  # Index 8 for cons_err_sq_sum
+    _, x_bar_norm_sq_aldo_mean, x_bar_norm_sq_aldo_std = aggregate_histories(all_hist_aldo, 7)  # Index 7 for x_bar_norm_sq
+    _, cons_err_sq_sum_aldo_mean, cons_err_sq_sum_aldo_std = aggregate_histories(all_hist_aldo, 8)  # Index 8 for cons_err_sq_sum
     
     # Compute relative errors
     # Relative suboptimality: |f(x_bar) - f*| / |f*|
     f_star_abs = abs(f_star)
     rel_subopt_dapd = subopt_dapd_mean / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapd_mean, np.nan)
+    rel_subopt_dapd_std = subopt_dapd_std / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapd_std, np.nan)
     rel_subopt_dapdb = subopt_dapdb_mean / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapdb_mean, np.nan)
+    rel_subopt_dapdb_std = subopt_dapdb_std / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapdb_std, np.nan)
     rel_subopt_aldo = subopt_aldo_mean / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_aldo_mean, np.nan)
+    rel_subopt_aldo_std = subopt_aldo_std / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_aldo_std, np.nan)
     
     # Relative consensus error: ||x_i^k - x_bar^k||^2 / (N * ||x_bar^k||^2)
     rel_cons_dapd = cons_err_sq_sum_dapd_mean / (N * np.maximum(x_bar_norm_sq_dapd_mean, 1e-12))
     rel_cons_dapdb = cons_err_sq_sum_dapdb_mean / (N * np.maximum(x_bar_norm_sq_dapdb_mean, 1e-12))
     rel_cons_aldo = cons_err_sq_sum_aldo_mean / (N * np.maximum(x_bar_norm_sq_aldo_mean, 1e-12))
+    rel_cons_dapd_std = np.abs(rel_cons_dapd) * np.sqrt(
+        np.maximum((cons_err_sq_sum_dapd_std / np.maximum(cons_err_sq_sum_dapd_mean, 1e-12))**2 +
+                   (x_bar_norm_sq_dapd_std / np.maximum(x_bar_norm_sq_dapd_mean, 1e-12))**2, 0)
+    )
+    rel_cons_dapdb_std = np.abs(rel_cons_dapdb) * np.sqrt(
+        np.maximum((cons_err_sq_sum_dapdb_std / np.maximum(cons_err_sq_sum_dapdb_mean, 1e-12))**2 +
+                   (x_bar_norm_sq_dapdb_std / np.maximum(x_bar_norm_sq_dapdb_mean, 1e-12))**2, 0)
+    )
+    rel_cons_aldo_std = np.abs(rel_cons_aldo) * np.sqrt(
+        np.maximum((cons_err_sq_sum_aldo_std / np.maximum(cons_err_sq_sum_aldo_mean, 1e-12))**2 +
+                   (x_bar_norm_sq_aldo_std / np.maximum(x_bar_norm_sq_aldo_mean, 1e-12))**2, 0)
+    )
     
     # Final comparison (averaged over simulations)
     print(f"\nFinal Results (averaged over {num_simulations} simulations):")
@@ -321,7 +343,7 @@ if __name__ == "__main__":
     os.makedirs(output_dir, exist_ok=True)
     
     network_info = f"SW_N{N}_E{E}" if network_type == "small_world" else f"UNK_N{N}"
-    subfolder_name = f"{network_info}_n{n}_l1{lambda_l1}_init{initialization_mode}_seed{main_seed}_{solver_seed}_nsims{num_simulations}_{timestamp}"
+    subfolder_name = f"{network_info}_n{n}_l1{lambda_l1:.4f}_init{initialization_mode}_seed{main_seed}_{solver_seed}_nsims{num_simulations}_{timestamp}"
     subfolder_path = os.path.join(output_dir, subfolder_name)
     os.makedirs(subfolder_path, exist_ok=True)
     
@@ -408,8 +430,20 @@ if __name__ == "__main__":
     if not all(np.isnan(rel_subopt_dapd)) and not all(np.isnan(rel_subopt_dapdb)) and not all(np.isnan(rel_subopt_aldo)):
         fig4, ax4 = plt.subplots(figsize=(10, 6))
         ax4.semilogy(grad_calls_dapd, rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
+        ax4.fill_between(grad_calls_dapd,
+                         np.maximum(rel_subopt_dapd - rel_subopt_dapd_std, 1e-12),
+                         rel_subopt_dapd + rel_subopt_dapd_std,
+                         alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
         ax4.semilogy(grad_calls_dapdb, rel_subopt_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax4.fill_between(grad_calls_dapdb,
+                         np.maximum(rel_subopt_dapdb - rel_subopt_dapdb_std, 1e-12),
+                         rel_subopt_dapdb + rel_subopt_dapdb_std,
+                         alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
         ax4.semilogy(grad_calls_aldo, rel_subopt_aldo, lw=2, label='ALDO (mean)', color='green', linestyle=':')
+        ax4.fill_between(grad_calls_aldo,
+                         np.maximum(rel_subopt_aldo - rel_subopt_aldo_std, 1e-12),
+                         rel_subopt_aldo + rel_subopt_aldo_std,
+                         alpha=0.2, color='green', label=f'ALDO (±1 std, {num_simulations} sims)')
         ax4.set_title(f'Relative Suboptimality: $|f(\\bar{{x}}^k) - f^*|/|f^*|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
         ax4.set_xlabel('Average Number of Gradient Calls per Node')
         ax4.set_ylabel('Relative Suboptimality')
@@ -421,11 +455,58 @@ if __name__ == "__main__":
         print(f"Saved: {filename4}")
         plt.close()
     
+    # 4b. Log Relative Suboptimality
+    if not all(np.isnan(rel_subopt_dapd)) and not all(np.isnan(rel_subopt_dapdb)) and not all(np.isnan(rel_subopt_aldo)):
+        log_rel_subopt_dapd = np.log(rel_subopt_dapd + 1.0)
+        log_rel_subopt_dapdb = np.log(rel_subopt_dapdb + 1.0)
+        log_rel_subopt_aldo = np.log(rel_subopt_aldo + 1.0)
+        log_rel_subopt_dapd_std = rel_subopt_dapd_std / (rel_subopt_dapd + 1.0)
+        log_rel_subopt_dapdb_std = rel_subopt_dapdb_std / (rel_subopt_dapdb + 1.0)
+        log_rel_subopt_aldo_std = rel_subopt_aldo_std / (rel_subopt_aldo + 1.0)
+        fig4b, ax4b = plt.subplots(figsize=(10, 6))
+        ax4b.plot(grad_calls_dapd, log_rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
+        ax4b.fill_between(grad_calls_dapd,
+                          log_rel_subopt_dapd - log_rel_subopt_dapd_std,
+                          log_rel_subopt_dapd + log_rel_subopt_dapd_std,
+                          alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+        ax4b.plot(grad_calls_dapdb, log_rel_subopt_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax4b.fill_between(grad_calls_dapdb,
+                          log_rel_subopt_dapdb - log_rel_subopt_dapdb_std,
+                          log_rel_subopt_dapdb + log_rel_subopt_dapdb_std,
+                          alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+        ax4b.plot(grad_calls_aldo, log_rel_subopt_aldo, lw=2, label='ALDO (mean)', color='green', linestyle=':')
+        ax4b.fill_between(grad_calls_aldo,
+                          log_rel_subopt_aldo - log_rel_subopt_aldo_std,
+                          log_rel_subopt_aldo + log_rel_subopt_aldo_std,
+                          alpha=0.2, color='green', label=f'ALDO (±1 std, {num_simulations} sims)')
+        ax4b.set_title(f'Log Relative Suboptimality: $\\log((|f(\\bar{{x}}^k) - f^*|/|f^*|) + 1)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
+        ax4b.set_xlabel('Average Number of Gradient Calls per Node')
+        ax4b.set_ylabel('$\\log((|f(\\bar{{x}}^k) - f^*|/|f^*|) + 1)$')
+        ax4b.legend()
+        ax4b.grid(True, alpha=0.3)
+        plt.tight_layout()
+        filename4b = os.path.join(subfolder_path, f"{base_filename}_log_relative_suboptimality.png")
+        plt.savefig(filename4b, dpi=300, bbox_inches='tight')
+        print(f"Saved: {filename4b}")
+        plt.close()
+
     # 5. Relative Consensus Error: ||x_i^k - x_bar^k||^2 / (N * ||x_bar^k||^2)
     fig5, ax5 = plt.subplots(figsize=(10, 6))
     ax5.semilogy(grad_calls_dapd, rel_cons_dapd, lw=2, label='D-APD (mean)', color='blue')
+    ax5.fill_between(grad_calls_dapd,
+                     np.maximum(rel_cons_dapd - rel_cons_dapd_std, 1e-12),
+                     rel_cons_dapd + rel_cons_dapd_std,
+                     alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
     ax5.semilogy(grad_calls_dapdb, rel_cons_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax5.fill_between(grad_calls_dapdb,
+                     np.maximum(rel_cons_dapdb - rel_cons_dapdb_std, 1e-12),
+                     rel_cons_dapdb + rel_cons_dapdb_std,
+                     alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
     ax5.semilogy(grad_calls_aldo, rel_cons_aldo, lw=2, label='ALDO (mean)', color='green', linestyle=':')
+    ax5.fill_between(grad_calls_aldo,
+                     np.maximum(rel_cons_aldo - rel_cons_aldo_std, 1e-12),
+                     rel_cons_aldo + rel_cons_aldo_std,
+                     alpha=0.2, color='green', label=f'ALDO (±1 std, {num_simulations} sims)')
     ax5.set_title(f'Relative Consensus Error: $\\|x_i^k - \\bar{{x}}^k\\|^2/(N\\|\\bar{{x}}^k\\|^2)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax5.set_xlabel('Average Number of Gradient Calls per Node')
     ax5.set_ylabel('Relative Consensus Error')

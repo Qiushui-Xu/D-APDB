@@ -84,7 +84,8 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
                              phi_star=None, tol=1e-8, normalize_consensus_error=False,
                              use_optimal_consensus_error=False, x_star=None,
                              neighbors_list=None, initialization_mode="connected",
-                             lambda_l1=None, initial_points=None):
+                             lambda_l1=None, initial_points=None,
+                             Q_list=None):
     """
     Decentralized Adaptive Three Operator Splitting (global_DATOS) for QCQP
     
@@ -154,12 +155,22 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
         print(W)
         print(f"W eigenvalues: {np.linalg.eigvals(W)}")
     
-    # Local smooth objective: φ_i(x) = (1/N)*(0.5 x^T A0 x + b0^T x + c0)
-    def phi_i(x):
-        return (0.5 * x @ (A0 @ x) + b0 @ x + c0) / N
-    
-    def grad_phi_i(x):
-        return (A0 @ x + b0) / N
+    # Local smooth objective: if Q_list is provided, use node-specific objectives φ_i(x) = 0.5 x^T Q_i x
+    # otherwise fall back to aggregated objective φ_i(x) = (1/N)*(0.5 x^T A0 x + b0^T x + c0)
+    if Q_list is not None:
+        if len(Q_list) != N:
+            raise ValueError(f"Q_list must have length N={N}, got {len(Q_list)}")
+        def phi_i_node(i, x):
+            return 0.5 * x @ (Q_list[i] @ x)
+        
+        def grad_phi_i_node(i, x):
+            return Q_list[i] @ x
+    else:
+        def phi_i_node(i, x):
+            return (0.5 * x @ (A0 @ x) + b0 @ x + c0) / N
+        
+        def grad_phi_i_node(i, x):
+            return (A0 @ x + b0) / N
     
     # Helper to project onto box when bounds exist (can be None for L1-only case)
     def _project_box(vec):
@@ -169,14 +180,17 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
             return vec
         return np.clip(vec, lo, hi)
     
+    # Determine centralized L1 coefficient (default to 1/N if not provided)
+    lambda_coeff = lambda_l1 if lambda_l1 is not None else (1.0 / N)
+    
     # Proximal operator for non-smooth term r_i:
-    # If lambda_l1 is None -> r_i(x) = I_{[box_lo, box_hi]^n}(x)
-    # If lambda_l1 > 0   -> r_i(x) = (1/N)*lambda_l1*||x||_1 (+ indicator if box bounds provided)
-    # Uses L1 soft-thresholding when lambda_l1 > 0
+    # If lambda_coeff == 0 -> r_i(x) = I_{[box_lo, box_hi]^n}(x)
+    # If lambda_coeff > 0  -> r_i(x) = lambda_coeff * ||x||_1 (+ indicator if box bounds provided)
+    # Uses L1 soft-thresholding when lambda_coeff > 0
     def prox_box(v, alpha):
-        if lambda_l1 is not None and lambda_l1 > 0:
-            # Soft-thresholding for (1/N)*lambda_l1*||·||_1
-            threshold = alpha * (lambda_l1 / N)
+        if lambda_coeff > 0:
+            # Soft-thresholding for lambda_coeff * ||·||_1
+            threshold = alpha * lambda_coeff
             v_soft = np.sign(v) * np.maximum(np.abs(v) - threshold, 0.0)
             return _project_box(v_soft)
         return _project_box(v)
@@ -189,9 +203,10 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
     # Initialize states
     # X^0: N x n matrix, each row is x_i^0
     if initial_points is not None:
-        if initial_points.shape != (N, n):
-            raise ValueError("initial_points must have shape (N, n)")
-        X = initial_points.copy()
+        initial_points_arr = np.asarray(initial_points)
+        if initial_points_arr.shape != (N, n):
+            raise ValueError(f"initial_points must have shape (N, n), got {initial_points_arr.shape}")
+        X = initial_points_arr.copy()
     elif initialization_mode == "connected":
         # Connected mode: nodes with edges have the same initial values
         visited = [False] * N
@@ -216,7 +231,7 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
             if box_lo is not None and box_hi is not None:
                 x_init_group = initial_scale * rng.uniform(box_lo, box_hi, size=n)
             else:
-            x_init_group = initial_scale * rng.standard_normal(n)
+                x_init_group = initial_scale * rng.standard_normal(n)
             for node in group:
                 X[node, :] = x_init_group.copy()
         
@@ -273,7 +288,7 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
         grad_F = np.zeros((N, n))
         for i in range(N):
             grad_calls_per_node[i] += 1  # Count gradient call
-            grad_F[i, :] = grad_phi_i(X[i, :])
+            grad_F[i, :] = grad_phi_i_node(i, X[i, :])
         
         D_half = W @ (grad_F + S + D)
         
@@ -289,7 +304,9 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
             # Linesearch(α^{k-1}, φ_i, x_i^k, x_i^{k+1/2}, -d_i^{k+1/2}, δ)
             # Use already computed gradient grad_F[i, :] = grad_phi_i(x_i^k)
             alpha_bar_i, num_backtrack_i = linesearch_with_grad(
-                alpha_prev, phi_i, grad_F[i, :], x_i_k, x_i_half, d_i_half, delta
+                alpha_prev,
+                lambda x, node=i: phi_i_node(node, x),
+                grad_F[i, :], x_i_k, x_i_half, d_i_half, delta
             )
             alpha_bar_list.append(alpha_bar_i)
             total_backtrack_iterations += num_backtrack_i
@@ -340,11 +357,14 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
         # Constraint violations (not applicable for ALDO - constraints handled via prox)
         max_viol = 0.0
         avg_viol = 0.0
-        # Objective: φ(x) + r(x) where φ(x) = 0.5 * x^T A0 x + b0^T x + c0
-        # and r(x) = lambda_l1 * ||x||_1 if lambda_l1 > 0
-        obj = 0.5 * x_bar @ (A0 @ x_bar) + b0 @ x_bar + c0
-        if lambda_l1 is not None and lambda_l1 > 0:
-            obj += lambda_l1 * np.linalg.norm(x_bar, 1)
+        # Objective: φ(x) + r(x)
+        # φ(x) = 0.5 * x^T Q_i x (averaged across nodes if Q_list is None)
+        # r(x) = lambda_coeff * ||x||_1
+        if Q_list is not None:
+            obj = sum(0.5 * x_bar @ (Q_i @ x_bar) for Q_i in Q_list)
+        else:
+            obj = 0.5 * x_bar @ (A0 @ x_bar) + b0 @ x_bar + c0
+        obj += lambda_coeff * np.linalg.norm(x_bar, 1)
         subopt = abs(obj - phi_star) if phi_star is not None else np.nan
         
         # Average gradient calls per node

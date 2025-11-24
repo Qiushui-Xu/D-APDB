@@ -95,7 +95,7 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
         # Aggregated objective: φ_i(x) = (1/N)*(0.5 x^T A0 x + b0^T x)
         def phi_i(i, x):
             return (0.5 * x @ (A0 @ x) + b0 @ x) / N
-        
+    
         def grad_phi_i(i, x):
             return (A0 @ x + b0) / N
 

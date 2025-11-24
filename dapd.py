@@ -222,7 +222,7 @@ def d_apd_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
             q_i_0 += s[i] - s[j]  # s_i^0 - s_j^0, but s_i^0 = 0, so this is 0 - 0 = 0
         q.append(q_i_0)
         q_prev.append(q_i_0.copy())
-    
+        
     # Compute initial tau per node if not provided
     # If tau_list is provided, use it directly (for using same tau as D-APDB or pre-computed)
     if tau_list is not None:
@@ -418,7 +418,7 @@ def d_apd_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
             if normalize_consensus_error:
                 x_bar_norm = np.linalg.norm(x_bar)
                 cons_err = cons_err / max(x_bar_norm, 1e-10)
-            
+        
         # Compute constraint violations
         # For distributed setting, we should check violations at each node's point x[i],
         # not just at x_bar, because each node has its own constraints

@@ -30,7 +30,7 @@ if __name__ == "__main__":
     
     # ==================== Problem Configuration ====================
     # Configuration for random seeds (use same seeds for both solvers)
-    main_seed = 42  # Seed for problem generation
+    main_seed = 2025  # Seed for problem generation
     solver_seed = 789  # Seed for algorithm initialization (must be same for both solvers)
     
     rng = np.random.default_rng(main_seed)  # Use configured seed
@@ -60,7 +60,7 @@ if __name__ == "__main__":
     # verbose_every: print initial step size and progress every N iterations
     # Set to 500 to print initial step size and then every 500 iterations
     verbose_every = 500  
-    initial_scale = 50.0
+    initial_scale = 10.0
     initialization_mode = "independent"  # Must be same for both solvers
     
     # ==================== Generate Network ====================
@@ -240,7 +240,7 @@ if __name__ == "__main__":
     print(f"  gamma_k is computed each iteration in both algorithms")
     
     # ==================== Run Multiple Simulations ====================
-    num_simulations = 2
+    num_simulations = 20
     print(f"\n" + "="*80)
     print(f"Running {num_simulations} Simulations (i.i.d. random initializations)")
     print("="*80)
