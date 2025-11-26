@@ -39,7 +39,8 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
                                neighbors_list=None, initialization_mode="connected",
                                B_theta=None, lambda_l1=None, initial_points=None,
                                E_use_gradient_form=False, tau_multiplier=0.005,
-                               Q_list=None, q_list=None, tau_list=None):
+                               Q_list=None, q_list=None, tau_list=None,
+                               constant_list=None):
     """
     Distributed APD with Backtracking (D-APDB) for QCQP
     
@@ -430,6 +431,9 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
     if Q_list is not None:
         if q_list is not None:
             obj_init = sum(0.5 * x_bar_init @ (Q_i @ x_bar_init) + q_i @ x_bar_init for Q_i, q_i in zip(Q_list, q_list))
+            # Add constant terms if provided
+            if constant_list is not None:
+                obj_init += sum(constant_list)
         else:
             obj_init = sum(0.5 * x_bar_init @ (Q_i @ x_bar_init) for Q_i in Q_list)
     else:
@@ -457,6 +461,7 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
         p_tilde = [None] * N
         x_tilde_kp1 = [None] * N
         theta_tilde_kp1 = [None] * N
+        grad_phi_i_cached = [None] * N  # Cache gradients computed in backtracking loop
         
         # Track total backtrack iterations across all nodes
         total_backtrack_iterations = 0
@@ -467,6 +472,10 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
             
             # Track backtracking iterations for node i
             backtrack_iterations_i = 0
+            
+            # Compute gradient once before backtracking loop (x[i] doesn't change during backtracking)
+            grad_phi_i_x_i = grad_phi_i(i, x[i])
+            grad_calls_per_node[i] += 1  # Node i counts its own gradient call: grad_f_i
             
             # Backtracking loop
             while True:
@@ -484,9 +493,9 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
                 
                 # x̃_i^{k+1} = prox_{τ̃_i^k r_i}(x_i^k - τ̃_i^k(∇φ_i(x_i^k) + p̃_i^k))
                 # where prox_{τ r_i}(v) = argmin_{w∈R^n} {τ r_i(w) + (1/2)||w - v||^2}
-                grad_calls_per_node[i] += 1  # Node i counts its own gradient call: grad_f_i
+                # Note: grad_phi_i(x[i]) is computed once before the loop and reused
                 x_tilde_kp1_i = prox_r_i(
-                    x[i] - tau_tilde_i * (grad_phi_i(i, x[i]) + p_tilde_i),
+                    x[i] - tau_tilde_i * (grad_phi_i_x_i + p_tilde_i),
                     tau_tilde_i
                 )
                 
@@ -497,23 +506,40 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
                     B_i_list[i]
                 )
                 
-                # Check backtracking condition:
-                # E_i^k(x̃_i^{k+1}, θ̃_i^{k+1}) <= -δ/τ̃_i^k ||x̃_i^{k+1} - x_i^k||^2 
-                #                                  - δ/σ̃_i^k ||θ̃_i^{k+1} - θ_i^k||^2
-                E_val = E_i_k(i, x_tilde_kp1_i, theta_tilde_kp1_i, x[i], theta[i],
-                              tau_tilde_i, sigma_tilde_i,
-                              alpha_list[i], beta_list[i],
-                              alpha_tilde_kp1, beta_tilde_kp1, varsigma_tilde_kp1, eta_i_k,
-                              use_gradient_form=E_use_gradient_form)
-                
+                # Check backtracking condition
                 dx_tilde = x_tilde_kp1_i - x[i]
-                dtheta_tilde = theta_tilde_kp1_i - theta[i]
                 dx_tilde_norm_sq = np.dot(dx_tilde, dx_tilde)
-                dtheta_tilde_norm_sq = np.dot(dtheta_tilde, dtheta_tilde)
                 
-                rhs = -(delta / tau_tilde_i) * dx_tilde_norm_sq - (delta / sigma_tilde_i) * dtheta_tilde_norm_sq
+                # Check if node i has constraints
+                has_constraints_i = len(pernode_constraints[i][0]) > 0
                 
-                if E_val <= rhs:
+                if has_constraints_i:
+                    # With constraints: use E_i^k condition
+                    # E_i^k(x̃_i^{k+1}, θ̃_i^{k+1}) <= -δ/τ̃_i^k ||x̃_i^{k+1} - x_i^k||^2 
+                    #                                  - δ/σ̃_i^k ||θ̃_i^{k+1} - θ_i^k||^2
+                    E_val = E_i_k(i, x_tilde_kp1_i, theta_tilde_kp1_i, x[i], theta[i],
+                                  tau_tilde_i, sigma_tilde_i,
+                                  alpha_list[i], beta_list[i],
+                                  alpha_tilde_kp1, beta_tilde_kp1, varsigma_tilde_kp1, eta_i_k,
+                                  use_gradient_form=E_use_gradient_form)
+                    
+                    dtheta_tilde = theta_tilde_kp1_i - theta[i]
+                    dtheta_tilde_norm_sq = np.dot(dtheta_tilde, dtheta_tilde)
+                    
+                    rhs = -(delta / tau_tilde_i) * dx_tilde_norm_sq - (delta / sigma_tilde_i) * dtheta_tilde_norm_sq
+                    condition_satisfied = (E_val <= rhs)
+                else:
+                    # Without constraints: use simplified condition
+                    # f_i(x̃_i^{k+1}) - f_i(x_i^k) - <∇f_i(x_i^k), x̃_i^{k+1} - x_i^k> 
+                    #     <= (1/(2τ̃_i^k)) * (1 - δ - c_α - c_ς) * ||x̃_i^{k+1} - x_i^k||^2
+                    f_tilde = phi_i(i, x_tilde_kp1_i)
+                    f_k = phi_i(i, x[i])
+                    # grad_phi_i_x_i is already computed before the backtracking loop
+                    lhs = f_tilde - f_k - np.dot(grad_phi_i_x_i, dx_tilde)
+                    rhs = (1.0 / (2.0 * tau_tilde_i)) * (1.0 - delta - c_alpha - c_varsigma) * dx_tilde_norm_sq
+                    condition_satisfied = (lhs <= rhs)
+                
+                if condition_satisfied:
                     # Condition satisfied, break
                     tau_tilde[i] = tau_tilde_i
                     sigma_tilde[i] = sigma_tilde_i
@@ -524,6 +550,7 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
                     p_tilde[i] = p_tilde_i
                     x_tilde_kp1[i] = x_tilde_kp1_i
                     theta_tilde_kp1[i] = theta_tilde_kp1_i
+                    grad_phi_i_cached[i] = grad_phi_i_x_i  # Cache the gradient for reuse
                     break
                 else:
                     # Condition not satisfied, shrink step size
@@ -562,19 +589,23 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
             p_i_k = q[i] + eta_k * (q[i] - q_prev[i])
             
             # Step 4: Update primal and dual variables
+            # IMPORTANT: Save x_prev[i] BEFORE updating x[i]!
+            x_prev_i_old = x[i].copy()  # Save old x[i] for x_prev update
+            theta_prev_i_old = theta[i].copy()  # Save old theta[i] for theta_prev update
+            
             if eta_k > 1.0:  # At least one node did backtracking (η^k > 1)
                 # Recompute with updated step size τ_i^k = τ_i^{k-1}/η^k and p_i^k based on global η^k
                 # x_i^{k+1} = prox_{τ_i^k r_i}(x_i^k - τ_i^k(∇φ_i(x_i^k) + p_i^k))
                 # where prox_{τ r_i}(v) = argmin_{w∈R^n} {τ r_i(w) + (1/2)||w - v||^2}
-                grad_calls_per_node[i] += 1  # Node i counts its own gradient call: grad_f_i
+                # Note: We reuse the cached gradient from backtracking loop (no additional gradient call needed)
                 x[i] = prox_r_i(
-                    x[i] - tau_list[i] * (grad_phi_i(i, x[i]) + p_i_k),
+                    x_prev_i_old - tau_list[i] * (grad_phi_i_cached[i] + p_i_k),
                     tau_list[i]
                 )
                 # θ_i^{k+1} = Π_{θ_i∈K_i^*∩B_i}(θ_i^k + σ_i^k g_i(x_i^{k+1}))
                 # Note: g_i_of computes constraint function values, not gradients, so we don't count it
                 theta[i] = proj_dual(
-                    theta[i] + sigma_i_k * g_i_of(i, x[i]),
+                    theta_prev_i_old + sigma_i_k * g_i_of(i, x[i]),
                     B_i_list[i]
                 )
             else:  # No backtracking occurred (η^k = 1)
@@ -596,8 +627,9 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
             varsigma_list[i] = c_varsigma / tau_list[i]
             
             # Update previous values for next iteration
-            x_prev[i] = x[i].copy()
-            theta_prev[i] = theta[i].copy()
+            # x_prev[i] should be the OLD x[i] (before this iteration's update)
+            x_prev[i] = x_prev_i_old
+            theta_prev[i] = theta_prev_i_old
             s_prev[i] = s[i].copy()
             tau_prev[i] = tau_list[i]
         
@@ -633,8 +665,11 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
         # Otherwise, use aggregated objective
         if Q_list is not None:
             if q_list is not None:
-                # Node-specific with linear terms: φ(x) = sum_i [(1/2) x^T Q_i x + q_i^T x]
+                # Node-specific with linear terms: φ(x) = sum_i [(1/2) x^T Q_i x + q_i^T x + c_i]
                 obj = sum(0.5 * x_bar @ (Q_i @ x_bar) + q_i @ x_bar for Q_i, q_i in zip(Q_list, q_list))
+                # Add constant terms if provided
+                if constant_list is not None:
+                    obj += sum(constant_list)
             else:
                 # Node-specific without linear terms: φ(x) = sum_i [(1/2) x^T Q_i x]
                 obj = sum(0.5 * x_bar @ (Q_i @ x_bar) for Q_i in Q_list)

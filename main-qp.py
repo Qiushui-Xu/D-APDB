@@ -10,11 +10,11 @@ dapd = importlib.util.module_from_spec(spec_dapd)
 sys.modules["dapd"] = dapd
 spec_dapd.loader.exec_module(dapd)
 
-# Import from dapdb.py (has d_apdb_qcqp_merely_convex)
-spec_dapdb = importlib.util.spec_from_file_location("dapdb", "dapdb.py")
-dapdb = importlib.util.module_from_spec(spec_dapdb)
-sys.modules["dapdb"] = dapdb
-spec_dapdb.loader.exec_module(dapdb)
+# Import from dapdbo.py (has d_apdb_unconstrained for unconstrained optimization)
+spec_dapdbo = importlib.util.spec_from_file_location("dapdbo", "dapdbo.py")
+dapdbo = importlib.util.module_from_spec(spec_dapdbo)
+sys.modules["dapdbo"] = dapdbo
+spec_dapdbo.loader.exec_module(dapdbo)
 
 # Import from aldo.py (has aldo_qcqp_merely_convex)
 spec_aldo = importlib.util.spec_from_file_location("aldo", "aldo.py")
@@ -23,7 +23,7 @@ sys.modules["aldo"] = aldo
 spec_aldo.loader.exec_module(aldo)
 
 # Import QP with L1 problem generation functions from utils
-from utils import generate_feasible_qp_l1, solve_qp_l1_ground_truth, build_empty_constraints
+from utils import generate_feasible_qp_l1, solve_qp_l1_ground_truth
 
 # --------------------------
 # Main comparison function
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     np.set_printoptions(precision=4, suppress=True)
     
     # Problem configuration
-    main_seed = 2025
+    main_seed = 42
     solver_seed = 789
     
     rng = np.random.default_rng(main_seed)
@@ -44,15 +44,15 @@ if __name__ == "__main__":
     
     # Algorithm parameters
     gamma = None
-    max_iter = 2000
+    max_iter = 3000
     c_alpha = 0.1
     c_beta = 0.1
     c_c = 0.1
     zeta = 1.0
-    rho_shrink = 0.5
+    rho_shrink = 0.9
     delta = 0.1
     verbose_every = 10
-    initial_scale = 1.0
+    initial_scale = 10
     initialization_mode = "independent"
     
     # Generate problem
@@ -60,13 +60,16 @@ if __name__ == "__main__":
     print("Generating QP Problem with L1 Regularization")
     print("="*80)
     
-    # Use generate_feasible_qp_l1 (with linear terms)
-    Q_list, q_list, lambda_l1 = generate_feasible_qp_l1(n, N, rng)
+    # Use generate_feasible_qp_l1 (with linear terms from (x - bar{x}^i)^T Q^i (x - bar{x}^i))
+    Q_list, q_list, lambda_l1, constant_list = generate_feasible_qp_l1(n, N, rng)
     
-    # Aggregate objective for ground truth solving: A0 = (1/N) * sum(Q_i), b0 = (1/N) * sum(q_i)
+    # Aggregate objective for ground truth solving: 
+    # A0 = (1/N) * sum(Q_i), b0 = (1/N) * sum(q_i), constant = (1/N) * sum(c_i)
     A0_agg = np.mean(Q_list, axis=0)
     b0_agg = np.mean(q_list, axis=0)
+    constant_agg = np.mean(constant_list)
     print(f"Generated problem: n={n}, lambda_l1={lambda_l1}")
+    print(f"Constant term (aggregated): {constant_agg:.6f}")
     
     # Generate network
     print("\nGenerating network topology...")
@@ -78,8 +81,12 @@ if __name__ == "__main__":
     print("\n" + "="*80)
     print("Solving Ground Truth")
     print("="*80)
-    x_star, f_star = solve_qp_l1_ground_truth(A0_agg, b0_agg, lambda_l1, neighbors_list)
-    print(f"Ground truth: f* = {f_star:.6f}")
+    # solve_qp_l1_ground_truth directly solves the centralized problem:
+    #   min sum_i [(1/2) x^T Q^i x + (q^i)^T x + c^i] + 1.0 * ||x||_1
+    # This is the same scale as the algorithms compute.
+    x_star, f_star = solve_qp_l1_ground_truth(A0_agg, b0_agg, lambda_l1, neighbors_list, 
+                                               constant_term=constant_agg, use_centralized_scale=True)
+    print(f"Ground truth (centralized scale): f* = {f_star:.6f}")
     print(f"x* norm: {np.linalg.norm(x_star):.6f}")
     print(f"x* l1 norm: {np.linalg.norm(x_star, 1):.6f}")
     
@@ -99,11 +106,11 @@ if __name__ == "__main__":
     tau_dapd_list = [1.0 / L_val for L_val in L_f_i_list]
     
     # D-APDB: tau_i = tau_multiplier / L_{f_i} for each node
-    tau_multiplier = 5  # Hyperparameter for D-APDB
-    tau_dapdb_list = [tau_multiplier / L_val for L_val in L_f_i_list]
+    tau_multiplier = 1  # Hyperparameter for D-APDB
+    tau_dapdbo_list = [tau_multiplier / L_val for L_val in L_f_i_list]
     
     # ALDO: alpha_init = constant / max{L_{f_i}}
-    alpha_init_constant = 5.0  # Hyperparameter for ALDO
+    alpha_init_constant = 10.0  # Hyperparameter for ALDO
     alpha_init_aldo = alpha_init_constant / max_L_f_i
     
     # Compute gamma for D-APD (use largest tau_i for conservative bound)
@@ -117,27 +124,23 @@ if __name__ == "__main__":
     print(f"  L_f_i stats -> min: {min_L_f_i:.6f}, max: {max_L_f_i:.6f}, mean: {mean_L_f_i:.6f}")
     print(f"\nInitial step sizes:")
     print(f"  D-APD: tau_i = 1 / L_f_i (min={min(tau_dapd_list):.6e}, max={max(tau_dapd_list):.6e})")
-    print(f"  D-APDB: tau_i = {tau_multiplier} / L_f_i (min={min(tau_dapdb_list):.6e}, max={max(tau_dapdb_list):.6e})")
+    print(f"  D-APDB: tau_i = {tau_multiplier} / L_f_i (min={min(tau_dapdbo_list):.6e}, max={max(tau_dapdbo_list):.6e})")
     print(f"  ALDO: alpha_init = {alpha_init_constant} / max{{L_f_i}} = {alpha_init_aldo:.6e} (alpha_init_constant = {alpha_init_constant})")
     print(f"\nOther parameters:")
     print(f"  D-APD gamma = {computed_gamma_dapd:.6e}")
     
-    # Prepare empty per-node constraints (no quadratic constraints for L1 problem)
-    pernode_constraints = build_empty_constraints(N)
-    zero_B_theta = [0.0] * N
-    
     # ==================== Run Multiple Simulations ====================
-    num_simulations = 2
+    num_simulations = 1
     print(f"\n" + "="*80)
     print(f"Running {num_simulations} Simulations (i.i.d. random initializations)")
     print("="*80)
     
     # Storage for all simulation results
     all_hist_dapd = []
-    all_hist_dapdb = []
+    all_hist_dapdbo = []
     all_hist_aldo = []
     all_x_bar_dapd = []
-    all_x_bar_dapdb = []
+    all_x_bar_dapdbo = []
     all_x_bar_aldo = []
     
     for sim_idx in range(num_simulations):
@@ -152,7 +155,7 @@ if __name__ == "__main__":
         if sim_idx == 0:
             print("Running D-APD Solver...")
         x_bar_dapd, hist_dapd = dapd.d_apd_qcqp_merely_convex(
-            A0_agg, b0_agg, None, pernode_constraints, None, None,
+            A0_agg, b0_agg, None, [([], [], []) for _ in range(N)], None, None,
             Q_list=Q_list, q_list=q_list,  # Node-specific objectives
             N=N, max_iter=max_iter, seed=sim_seed,
             c_alpha=c_alpha, c_beta=c_beta, c_varsigma=c_c,
@@ -161,31 +164,31 @@ if __name__ == "__main__":
             phi_star=f_star, tol=1e-8, normalize_consensus_error=False,
             use_optimal_consensus_error=False, x_star=x_star,
             neighbors_list=neighbors_list, initialization_mode=initialization_mode,
-            B_theta=zero_B_theta, lambda_l1=lambda_l1, initial_points=initial_points_list,
-            tau_list=tau_dapd_list
+            B_theta=[0.0] * N, lambda_l1=lambda_l1, initial_points=initial_points_list,
+            tau_list=tau_dapd_list,
+            constant_list=constant_list  # Add constant terms
         )
         all_hist_dapd.append(hist_dapd)
         all_x_bar_dapd.append(x_bar_dapd)
         
-        # Run D-APDB
+        # Run D-APDB (unconstrained version)
         if sim_idx == 0:
             print("Running D-APDB Solver...")
-        x_bar_dapdb, hist_dapdb, _ = dapdb.d_apdb_qcqp_merely_convex(
-            A0_agg, b0_agg, None, pernode_constraints, None, None,
-            Q_list=Q_list, q_list=q_list,  # Node-specific objectives
-            N=N, max_iter=max_iter, seed=sim_seed,
-            c_alpha=c_alpha, c_beta=c_beta, c_varsigma=c_c,
-            zeta=zeta, tau_bar=None, gamma=gamma,
+        x_bar_dapdbo, hist_dapdbo, _ = dapdbo.d_apdb_unconstrained(
+            N=N, n=n, max_iter=max_iter, seed=sim_seed,
+            c_alpha=c_alpha, c_varsigma=c_c, c_gamma=None,  # c_gamma will be computed automatically
             rho_shrink=rho_shrink, delta=delta,
-            phi_star=f_star, verbose_every=verbose_every if sim_idx == 0 else 0,
-            initial_scale=initial_scale, neighbors_list=neighbors_list,
-            initialization_mode=initialization_mode,
-            B_theta=zero_B_theta, lambda_l1=lambda_l1, initial_points=initial_points_list,
-            E_use_gradient_form=True, tau_multiplier=tau_multiplier,
-            tau_list=tau_dapdb_list
+            verbose_every=verbose_every if sim_idx == 0 else 0,
+            initial_scale=initial_scale,
+            phi_star=f_star, tol=1e-8, normalize_consensus_error=False,
+            use_optimal_consensus_error=False, x_star=x_star,
+            neighbors_list=neighbors_list, initialization_mode=initialization_mode,
+            lambda_l1=lambda_l1, initial_points=initial_points_list,
+            Q_list=Q_list, q_list=q_list, tau_list=tau_dapdbo_list,
+            constant_list=constant_list  # Add constant terms
         )
-        all_hist_dapdb.append(hist_dapdb)
-        all_x_bar_dapdb.append(x_bar_dapdb)
+        all_hist_dapdbo.append(hist_dapdbo)
+        all_x_bar_dapdbo.append(x_bar_dapdbo)
         
         # Run ALDO
         if sim_idx == 0:
@@ -199,14 +202,14 @@ if __name__ == "__main__":
             use_optimal_consensus_error=False, x_star=x_star,
             neighbors_list=neighbors_list, initialization_mode=initialization_mode,
             lambda_l1=lambda_l1, initial_points=initial_points_list,
-            Q_list=Q_list
+            Q_list=Q_list, q_list=q_list, constant_list=constant_list  # Add linear and constant terms
         )
         all_hist_aldo.append(hist_aldo)
         all_x_bar_aldo.append(x_bar_aldo)
         
         if sim_idx == 0:
             print(f"D-APD result: ||x_bar - x*|| = {np.linalg.norm(x_bar_dapd - x_star):.6f}")
-            print(f"D-APDB result: ||x_bar - x*|| = {np.linalg.norm(x_bar_dapdb - x_star):.6f}")
+            print(f"D-APDB result: ||x_bar - x*|| = {np.linalg.norm(x_bar_dapdbo - x_star):.6f}")
             print(f"ALDO result: ||x_bar - x*|| = {np.linalg.norm(x_bar_aldo - x_star):.6f}")
     
     print(f"\nCompleted {num_simulations} simulations")
@@ -277,47 +280,53 @@ if __name__ == "__main__":
         return grad_calls_grid, mean_values, std_values
     
     # Aggregate all metrics for all three algorithms
+    # D-APD history format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, x_bar_norm_sq, cons_err_sq_sum, avg_tau)
     grad_calls_dapd, objs_dapd_mean, objs_dapd_std = aggregate_histories(all_hist_dapd, 0)
     _, cons_dapd_mean, cons_dapd_std = aggregate_histories(all_hist_dapd, 2)
     _, subopt_dapd_mean, subopt_dapd_std = aggregate_histories(all_hist_dapd, 4)
     _, x_bar_norm_sq_dapd_mean, x_bar_norm_sq_dapd_std = aggregate_histories(all_hist_dapd, 6)  # Index 6 for x_bar_norm_sq
     _, cons_err_sq_sum_dapd_mean, cons_err_sq_sum_dapd_std = aggregate_histories(all_hist_dapd, 7)  # Index 7 for cons_err_sq_sum
+    _, tau_dapd_mean, tau_dapd_std = aggregate_histories(all_hist_dapd, 8)  # Index 8 for avg_tau
     
-    grad_calls_dapdb, objs_dapdb_mean, objs_dapdb_std = aggregate_histories(all_hist_dapdb, 0)
-    _, cons_dapdb_mean, cons_dapdb_std = aggregate_histories(all_hist_dapdb, 2)
-    _, subopt_dapdb_mean, subopt_dapdb_std = aggregate_histories(all_hist_dapdb, 4)
-    _, backtrack_dapdb_mean, backtrack_dapdb_std = aggregate_histories(all_hist_dapdb, 6)  # Index 6 for backtrack iterations
-    _, x_bar_norm_sq_dapdb_mean, x_bar_norm_sq_dapdb_std = aggregate_histories(all_hist_dapdb, 7)  # Index 7 for x_bar_norm_sq
-    _, cons_err_sq_sum_dapdb_mean, cons_err_sq_sum_dapdb_std = aggregate_histories(all_hist_dapdb, 8)  # Index 8 for cons_err_sq_sum
+    # D-APDB history format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iters, x_bar_norm_sq, cons_err_sq_sum, avg_tau)
+    grad_calls_dapdbo, objs_dapdbo_mean, objs_dapdbo_std = aggregate_histories(all_hist_dapdbo, 0)
+    _, cons_dapdbo_mean, cons_dapdbo_std = aggregate_histories(all_hist_dapdbo, 2)
+    _, subopt_dapdbo_mean, subopt_dapdbo_std = aggregate_histories(all_hist_dapdbo, 4)
+    _, backtrack_dapdbo_mean, backtrack_dapdbo_std = aggregate_histories(all_hist_dapdbo, 6)  # Index 6 for backtrack iterations
+    _, x_bar_norm_sq_dapdbo_mean, x_bar_norm_sq_dapdbo_std = aggregate_histories(all_hist_dapdbo, 7)  # Index 7 for x_bar_norm_sq
+    _, cons_err_sq_sum_dapdbo_mean, cons_err_sq_sum_dapdbo_std = aggregate_histories(all_hist_dapdbo, 8)  # Index 8 for cons_err_sq_sum
+    _, tau_dapdbo_mean, tau_dapdbo_std = aggregate_histories(all_hist_dapdbo, 9)  # Index 9 for avg_tau
     
+    # ALDO/global-DATOS history format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iters, x_bar_norm_sq, cons_err_sq_sum, alpha)
     grad_calls_aldo, objs_aldo_mean, objs_aldo_std = aggregate_histories(all_hist_aldo, 0)
     _, cons_aldo_mean, cons_aldo_std = aggregate_histories(all_hist_aldo, 2)
     _, subopt_aldo_mean, subopt_aldo_std = aggregate_histories(all_hist_aldo, 4)
     _, backtrack_aldo_mean, backtrack_aldo_std = aggregate_histories(all_hist_aldo, 6)  # Index 6 for backtrack iterations
     _, x_bar_norm_sq_aldo_mean, x_bar_norm_sq_aldo_std = aggregate_histories(all_hist_aldo, 7)  # Index 7 for x_bar_norm_sq
     _, cons_err_sq_sum_aldo_mean, cons_err_sq_sum_aldo_std = aggregate_histories(all_hist_aldo, 8)  # Index 8 for cons_err_sq_sum
+    _, alpha_aldo_mean, alpha_aldo_std = aggregate_histories(all_hist_aldo, 9)  # Index 9 for alpha
     
     # Compute relative errors
     # Relative suboptimality: |f(x_bar) - f*| / |f*|
     f_star_abs = abs(f_star)
     rel_subopt_dapd = subopt_dapd_mean / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapd_mean, np.nan)
     rel_subopt_dapd_std = subopt_dapd_std / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapd_std, np.nan)
-    rel_subopt_dapdb = subopt_dapdb_mean / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapdb_mean, np.nan)
-    rel_subopt_dapdb_std = subopt_dapdb_std / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapdb_std, np.nan)
+    rel_subopt_dapdbo = subopt_dapdbo_mean / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapdbo_mean, np.nan)
+    rel_subopt_dapdbo_std = subopt_dapdbo_std / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapdbo_std, np.nan)
     rel_subopt_aldo = subopt_aldo_mean / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_aldo_mean, np.nan)
     rel_subopt_aldo_std = subopt_aldo_std / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_aldo_std, np.nan)
     
     # Relative consensus error: ||x_i^k - x_bar^k||^2 / (N * ||x_bar^k||^2)
     rel_cons_dapd = cons_err_sq_sum_dapd_mean / (N * np.maximum(x_bar_norm_sq_dapd_mean, 1e-12))
-    rel_cons_dapdb = cons_err_sq_sum_dapdb_mean / (N * np.maximum(x_bar_norm_sq_dapdb_mean, 1e-12))
+    rel_cons_dapdbo = cons_err_sq_sum_dapdbo_mean / (N * np.maximum(x_bar_norm_sq_dapdbo_mean, 1e-12))
     rel_cons_aldo = cons_err_sq_sum_aldo_mean / (N * np.maximum(x_bar_norm_sq_aldo_mean, 1e-12))
     rel_cons_dapd_std = np.abs(rel_cons_dapd) * np.sqrt(
         np.maximum((cons_err_sq_sum_dapd_std / np.maximum(cons_err_sq_sum_dapd_mean, 1e-12))**2 +
                    (x_bar_norm_sq_dapd_std / np.maximum(x_bar_norm_sq_dapd_mean, 1e-12))**2, 0)
     )
-    rel_cons_dapdb_std = np.abs(rel_cons_dapdb) * np.sqrt(
-        np.maximum((cons_err_sq_sum_dapdb_std / np.maximum(cons_err_sq_sum_dapdb_mean, 1e-12))**2 +
-                   (x_bar_norm_sq_dapdb_std / np.maximum(x_bar_norm_sq_dapdb_mean, 1e-12))**2, 0)
+    rel_cons_dapdbo_std = np.abs(rel_cons_dapdbo) * np.sqrt(
+        np.maximum((cons_err_sq_sum_dapdbo_std / np.maximum(cons_err_sq_sum_dapdbo_mean, 1e-12))**2 +
+                   (x_bar_norm_sq_dapdbo_std / np.maximum(x_bar_norm_sq_dapdbo_mean, 1e-12))**2, 0)
     )
     rel_cons_aldo_std = np.abs(rel_cons_aldo) * np.sqrt(
         np.maximum((cons_err_sq_sum_aldo_std / np.maximum(cons_err_sq_sum_aldo_mean, 1e-12))**2 +
@@ -327,11 +336,11 @@ if __name__ == "__main__":
     # Final comparison (averaged over simulations)
     print(f"\nFinal Results (averaged over {num_simulations} simulations):")
     avg_dist_dapd = np.mean([np.linalg.norm(x - x_star) for x in all_x_bar_dapd])
-    avg_dist_dapdb = np.mean([np.linalg.norm(x - x_star) for x in all_x_bar_dapdb])
+    avg_dist_dapdbo = np.mean([np.linalg.norm(x - x_star) for x in all_x_bar_dapdbo])
     avg_dist_aldo = np.mean([np.linalg.norm(x - x_star) for x in all_x_bar_aldo])
-    print(f"  D-APD:  avg ||x - x*|| = {avg_dist_dapd:.6f}, avg f(x) = {objs_dapd_mean[-1]:.6f}, avg subopt = {subopt_dapd_mean[-1]:.6e}")
-    print(f"  D-APDB: avg ||x - x*|| = {avg_dist_dapdb:.6f}, avg f(x) = {objs_dapdb_mean[-1]:.6f}, avg subopt = {subopt_dapdb_mean[-1]:.6e}")
-    print(f"  ALDO:   avg ||x - x*|| = {avg_dist_aldo:.6f}, avg f(x) = {objs_aldo_mean[-1]:.6f}, avg subopt = {subopt_aldo_mean[-1]:.6e}")
+    print(f"  D-APD:    avg ||x - x*|| = {avg_dist_dapd:.6f}, avg f(x) = {objs_dapd_mean[-1]:.6f}, avg subopt = {subopt_dapd_mean[-1]:.6e}")
+    print(f"  D-APDB: avg ||x - x*|| = {avg_dist_dapdbo:.6f}, avg f(x) = {objs_dapdbo_mean[-1]:.6f}, avg subopt = {subopt_dapdbo_mean[-1]:.6e}")
+    print(f"  ALDO:     avg ||x - x*|| = {avg_dist_aldo:.6f}, avg f(x) = {objs_aldo_mean[-1]:.6f}, avg subopt = {subopt_aldo_mean[-1]:.6e}")
     print(f"  Ground truth: f* = {f_star:.6f}")
     
     # Plotting
@@ -356,14 +365,14 @@ if __name__ == "__main__":
     ax1.fill_between(grad_calls_dapd, objs_dapd_mean - objs_dapd_std, objs_dapd_mean + objs_dapd_std, 
                       alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
     # D-APDB with shaded region
-    ax1.plot(grad_calls_dapdb, objs_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-    ax1.fill_between(grad_calls_dapdb, objs_dapdb_mean - objs_dapdb_std, objs_dapdb_mean + objs_dapdb_std, 
+    ax1.plot(grad_calls_dapdbo, objs_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax1.fill_between(grad_calls_dapdbo, objs_dapdbo_mean - objs_dapdbo_std, objs_dapdbo_mean + objs_dapdbo_std, 
                       alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
     # ALDO with shaded region
-    ax1.plot(grad_calls_aldo, objs_aldo_mean, lw=2, label='ALDO (mean)', color='green', linestyle=':')
+    ax1.plot(grad_calls_aldo, objs_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
     ax1.fill_between(grad_calls_aldo, objs_aldo_mean - objs_aldo_std, objs_aldo_mean + objs_aldo_std, 
-                      alpha=0.2, color='green', label=f'ALDO (±1 std, {num_simulations} sims)')
-    ax1.axhline(f_star, color='k', ls=':', alpha=0.5, label='f*')
+                      alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+    ax1.axhline(f_star, color='k', ls=':', alpha=0.5, label='$\\varphi^*$')
     ax1.set_title(f'Objective Function with L1 Regularization (N={N}, n={n}, λ={lambda_l1}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax1.set_xlabel('Average Number of Gradient Calls per Node')
     ax1.set_ylabel('Objective Value')
@@ -382,13 +391,13 @@ if __name__ == "__main__":
     ax2.fill_between(grad_calls_dapd, cons_dapd_mean - cons_dapd_std, cons_dapd_mean + cons_dapd_std, 
                       alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
     # D-APDB with shaded region
-    ax2.plot(grad_calls_dapdb, cons_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-    ax2.fill_between(grad_calls_dapdb, cons_dapdb_mean - cons_dapdb_std, cons_dapdb_mean + cons_dapdb_std, 
+    ax2.plot(grad_calls_dapdbo, cons_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax2.fill_between(grad_calls_dapdbo, cons_dapdbo_mean - cons_dapdbo_std, cons_dapdbo_mean + cons_dapdbo_std, 
                       alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
     # ALDO with shaded region
-    ax2.plot(grad_calls_aldo, cons_aldo_mean, lw=2, label='ALDO (mean)', color='green', linestyle=':')
+    ax2.plot(grad_calls_aldo, cons_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
     ax2.fill_between(grad_calls_aldo, cons_aldo_mean - cons_aldo_std, cons_aldo_mean + cons_aldo_std, 
-                      alpha=0.2, color='green', label=f'ALDO (±1 std, {num_simulations} sims)')
+                      alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
     ax2.set_title(f'Consensus Error (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax2.set_xlabel('Average Number of Gradient Calls per Node')
     ax2.set_ylabel('Consensus Error')
@@ -401,20 +410,20 @@ if __name__ == "__main__":
     plt.close()
     
     # 3. Absolute Suboptimality
-    if not all(np.isnan(subopt_dapd_mean)) and not all(np.isnan(subopt_dapdb_mean)) and not all(np.isnan(subopt_aldo_mean)):
+    if not all(np.isnan(subopt_dapd_mean)) and not all(np.isnan(subopt_dapdbo_mean)) and not all(np.isnan(subopt_aldo_mean)):
         fig3, ax3 = plt.subplots(figsize=(10, 6))
         # D-APD with shaded region
         ax3.plot(grad_calls_dapd, subopt_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
         ax3.fill_between(grad_calls_dapd, subopt_dapd_mean - subopt_dapd_std, subopt_dapd_mean + subopt_dapd_std, 
                           alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
         # D-APDB with shaded region
-        ax3.plot(grad_calls_dapdb, subopt_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-        ax3.fill_between(grad_calls_dapdb, subopt_dapdb_mean - subopt_dapdb_std, subopt_dapdb_mean + subopt_dapdb_std, 
+        ax3.plot(grad_calls_dapdbo, subopt_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax3.fill_between(grad_calls_dapdbo, subopt_dapdbo_mean - subopt_dapdbo_std, subopt_dapdbo_mean + subopt_dapdbo_std, 
                           alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
         # ALDO with shaded region
-        ax3.plot(grad_calls_aldo, subopt_aldo_mean, lw=2, label='ALDO (mean)', color='green', linestyle=':')
+        ax3.plot(grad_calls_aldo, subopt_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
         ax3.fill_between(grad_calls_aldo, subopt_aldo_mean - subopt_aldo_std, subopt_aldo_mean + subopt_aldo_std, 
-                          alpha=0.2, color='green', label=f'ALDO (±1 std, {num_simulations} sims)')
+                          alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
         ax3.set_title(f'Absolute Suboptimality (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
         ax3.set_xlabel('Average Number of Gradient Calls per Node')
         ax3.set_ylabel('Suboptimality')
@@ -427,24 +436,24 @@ if __name__ == "__main__":
         plt.close()
     
     # 4. Relative Suboptimality: |f(x_bar) - f*| / |f*|
-    if not all(np.isnan(rel_subopt_dapd)) and not all(np.isnan(rel_subopt_dapdb)) and not all(np.isnan(rel_subopt_aldo)):
+    if not all(np.isnan(rel_subopt_dapd)) and not all(np.isnan(rel_subopt_dapdbo)) and not all(np.isnan(rel_subopt_aldo)):
         fig4, ax4 = plt.subplots(figsize=(10, 6))
         ax4.semilogy(grad_calls_dapd, rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
         ax4.fill_between(grad_calls_dapd,
                          np.maximum(rel_subopt_dapd - rel_subopt_dapd_std, 1e-12),
                          rel_subopt_dapd + rel_subopt_dapd_std,
                          alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
-        ax4.semilogy(grad_calls_dapdb, rel_subopt_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-        ax4.fill_between(grad_calls_dapdb,
-                         np.maximum(rel_subopt_dapdb - rel_subopt_dapdb_std, 1e-12),
-                         rel_subopt_dapdb + rel_subopt_dapdb_std,
+        ax4.semilogy(grad_calls_dapdbo, rel_subopt_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax4.fill_between(grad_calls_dapdbo,
+                         np.maximum(rel_subopt_dapdbo - rel_subopt_dapdbo_std, 1e-12),
+                         rel_subopt_dapdbo + rel_subopt_dapdbo_std,
                          alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
-        ax4.semilogy(grad_calls_aldo, rel_subopt_aldo, lw=2, label='ALDO (mean)', color='green', linestyle=':')
+        ax4.semilogy(grad_calls_aldo, rel_subopt_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
         ax4.fill_between(grad_calls_aldo,
                          np.maximum(rel_subopt_aldo - rel_subopt_aldo_std, 1e-12),
                          rel_subopt_aldo + rel_subopt_aldo_std,
-                         alpha=0.2, color='green', label=f'ALDO (±1 std, {num_simulations} sims)')
-        ax4.set_title(f'Relative Suboptimality: $|f(\\bar{{x}}^k) - f^*|/|f^*|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
+                         alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+        ax4.set_title(f'Relative Suboptimality: $|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
         ax4.set_xlabel('Average Number of Gradient Calls per Node')
         ax4.set_ylabel('Relative Suboptimality')
         ax4.legend()
@@ -456,12 +465,12 @@ if __name__ == "__main__":
         plt.close()
     
     # 4b. Log Relative Suboptimality
-    if not all(np.isnan(rel_subopt_dapd)) and not all(np.isnan(rel_subopt_dapdb)) and not all(np.isnan(rel_subopt_aldo)):
+    if not all(np.isnan(rel_subopt_dapd)) and not all(np.isnan(rel_subopt_dapdbo)) and not all(np.isnan(rel_subopt_aldo)):
         log_rel_subopt_dapd = np.log(rel_subopt_dapd + 1.0)
-        log_rel_subopt_dapdb = np.log(rel_subopt_dapdb + 1.0)
+        log_rel_subopt_dapdbo = np.log(rel_subopt_dapdbo + 1.0)
         log_rel_subopt_aldo = np.log(rel_subopt_aldo + 1.0)
         log_rel_subopt_dapd_std = rel_subopt_dapd_std / (rel_subopt_dapd + 1.0)
-        log_rel_subopt_dapdb_std = rel_subopt_dapdb_std / (rel_subopt_dapdb + 1.0)
+        log_rel_subopt_dapdbo_std = rel_subopt_dapdbo_std / (rel_subopt_dapdbo + 1.0)
         log_rel_subopt_aldo_std = rel_subopt_aldo_std / (rel_subopt_aldo + 1.0)
         fig4b, ax4b = plt.subplots(figsize=(10, 6))
         ax4b.plot(grad_calls_dapd, log_rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
@@ -469,19 +478,19 @@ if __name__ == "__main__":
                           log_rel_subopt_dapd - log_rel_subopt_dapd_std,
                           log_rel_subopt_dapd + log_rel_subopt_dapd_std,
                           alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
-        ax4b.plot(grad_calls_dapdb, log_rel_subopt_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-        ax4b.fill_between(grad_calls_dapdb,
-                          log_rel_subopt_dapdb - log_rel_subopt_dapdb_std,
-                          log_rel_subopt_dapdb + log_rel_subopt_dapdb_std,
+        ax4b.plot(grad_calls_dapdbo, log_rel_subopt_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax4b.fill_between(grad_calls_dapdbo,
+                          log_rel_subopt_dapdbo - log_rel_subopt_dapdbo_std,
+                          log_rel_subopt_dapdbo + log_rel_subopt_dapdbo_std,
                           alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
-        ax4b.plot(grad_calls_aldo, log_rel_subopt_aldo, lw=2, label='ALDO (mean)', color='green', linestyle=':')
+        ax4b.plot(grad_calls_aldo, log_rel_subopt_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
         ax4b.fill_between(grad_calls_aldo,
                           log_rel_subopt_aldo - log_rel_subopt_aldo_std,
                           log_rel_subopt_aldo + log_rel_subopt_aldo_std,
-                          alpha=0.2, color='green', label=f'ALDO (±1 std, {num_simulations} sims)')
-        ax4b.set_title(f'Log Relative Suboptimality: $\\log((|f(\\bar{{x}}^k) - f^*|/|f^*|) + 1)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
+                          alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+        ax4b.set_title(f'Log Relative Suboptimality: $\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
         ax4b.set_xlabel('Average Number of Gradient Calls per Node')
-        ax4b.set_ylabel('$\\log((|f(\\bar{{x}}^k) - f^*|/|f^*|) + 1)$')
+        ax4b.set_ylabel('$\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$')
         ax4b.legend()
         ax4b.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -497,16 +506,16 @@ if __name__ == "__main__":
                      np.maximum(rel_cons_dapd - rel_cons_dapd_std, 1e-12),
                      rel_cons_dapd + rel_cons_dapd_std,
                      alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
-    ax5.semilogy(grad_calls_dapdb, rel_cons_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-    ax5.fill_between(grad_calls_dapdb,
-                     np.maximum(rel_cons_dapdb - rel_cons_dapdb_std, 1e-12),
-                     rel_cons_dapdb + rel_cons_dapdb_std,
+    ax5.semilogy(grad_calls_dapdbo, rel_cons_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax5.fill_between(grad_calls_dapdbo,
+                     np.maximum(rel_cons_dapdbo - rel_cons_dapdbo_std, 1e-12),
+                     rel_cons_dapdbo + rel_cons_dapdbo_std,
                      alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
-    ax5.semilogy(grad_calls_aldo, rel_cons_aldo, lw=2, label='ALDO (mean)', color='green', linestyle=':')
+    ax5.semilogy(grad_calls_aldo, rel_cons_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
     ax5.fill_between(grad_calls_aldo,
                      np.maximum(rel_cons_aldo - rel_cons_aldo_std, 1e-12),
                      rel_cons_aldo + rel_cons_aldo_std,
-                     alpha=0.2, color='green', label=f'ALDO (±1 std, {num_simulations} sims)')
+                     alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
     ax5.set_title(f'Relative Consensus Error: $\\|x_i^k - \\bar{{x}}^k\\|^2/(N\\|\\bar{{x}}^k\\|^2)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax5.set_xlabel('Average Number of Gradient Calls per Node')
     ax5.set_ylabel('Relative Consensus Error')
@@ -518,29 +527,140 @@ if __name__ == "__main__":
     print(f"Saved: {filename5}")
     plt.close()
     
-    # 6. Backtrack Iterations (D-APDB and ALDO)
-    if not all(np.isnan(backtrack_dapdb_mean)) or not all(np.isnan(backtrack_aldo_mean)):
-        fig6, ax6 = plt.subplots(figsize=(10, 6))
-        # D-APDB with shaded region
-        if not all(np.isnan(backtrack_dapdb_mean)):
-            ax6.plot(grad_calls_dapdb, backtrack_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-            ax6.fill_between(grad_calls_dapdb, backtrack_dapdb_mean - backtrack_dapdb_std, backtrack_dapdb_mean + backtrack_dapdb_std, 
-                              alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
-        # ALDO with shaded region
-        if not all(np.isnan(backtrack_aldo_mean)):
-            ax6.plot(grad_calls_aldo, backtrack_aldo_mean, lw=2, label='ALDO (mean)', color='green', linestyle=':')
-            ax6.fill_between(grad_calls_aldo, backtrack_aldo_mean - backtrack_aldo_std, backtrack_aldo_mean + backtrack_aldo_std, 
-                              alpha=0.2, color='green', label=f'ALDO (±1 std, {num_simulations} sims)')
-        ax6.set_title(f'Total Backtrack Iterations per Iteration (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-        ax6.set_xlabel('Average Number of Gradient Calls per Node')
-        ax6.set_ylabel('Total Backtrack Iterations (All Nodes)')
-        ax6.legend()
-        ax6.grid(True, alpha=0.3)
-        plt.tight_layout()
-        filename6 = os.path.join(subfolder_path, f"{base_filename}_backtrack.png")
-        plt.savefig(filename6, dpi=300, bbox_inches='tight')
-        print(f"Saved: {filename6}")
-        plt.close()
+    # 6. Backtrack Iterations (D-APDB and ALDO) - Focus on first 10-20 iterations
+    # Compute backtracking statistics from raw histories
+    print("\n" + "="*80)
+    print("Backtracking Statistics")
+    print("="*80)
+    
+    # D-APDB: Count iterations where backtracking occurred (backtrack_iters > 0)
+    dapdbo_backtrack_counts = []
+    for hist in all_hist_dapdbo:
+        # hist format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iters, ...)
+        backtrack_iters = [h[6] for h in hist[1:]]  # Skip initial point (index 0)
+        num_backtrack = sum(1 for b in backtrack_iters if b > 0)
+        total_iters = len(backtrack_iters)
+        dapdbo_backtrack_counts.append((num_backtrack, total_iters))
+    
+    avg_backtrack_dapdbo = np.mean([c[0] for c in dapdbo_backtrack_counts])
+    avg_total_dapdbo = np.mean([c[1] for c in dapdbo_backtrack_counts])
+    print(f"D-APDB: {avg_backtrack_dapdbo:.1f} / {avg_total_dapdbo:.1f} outer iterations had backtracking ({100*avg_backtrack_dapdbo/avg_total_dapdbo:.1f}%)")
+    
+    # global-DATOS: Count iterations where backtracking occurred (backtrack_iters > 0)
+    aldo_backtrack_counts = []
+    for hist in all_hist_aldo:
+        # hist format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iters, ...)
+        backtrack_iters = [h[6] for h in hist[1:]]  # Skip initial point (index 0)
+        num_backtrack = sum(1 for b in backtrack_iters if b > 0)
+        total_iters = len(backtrack_iters)
+        aldo_backtrack_counts.append((num_backtrack, total_iters))
+    
+    avg_backtrack_aldo = np.mean([c[0] for c in aldo_backtrack_counts])
+    avg_total_aldo = np.mean([c[1] for c in aldo_backtrack_counts])
+    print(f"global-DATOS: {avg_backtrack_aldo:.1f} / {avg_total_aldo:.1f} outer iterations had backtracking ({100*avg_backtrack_aldo/avg_total_aldo:.1f}%)")
+    
+    # Plot backtracking iterations - Use iteration number as x-axis (like main-qcqp.py)
+    focus_iterations = 20  # Focus on first 20 iterations
+    
+    # Extract backtrack values for each simulation and align by iteration number
+    # D-APDB
+    all_backtrack_dapdbo = []
+    for hist in all_hist_dapdbo:
+        backtrack_vals = np.array([h[6] for h in hist])  # Index 6 for backtrack iterations
+        all_backtrack_dapdbo.append(backtrack_vals)
+    
+    # global-DATOS
+    all_backtrack_aldo = []
+    for hist in all_hist_aldo:
+        backtrack_vals = np.array([h[6] for h in hist])  # Index 6 for backtrack iterations
+        all_backtrack_aldo.append(backtrack_vals)
+    
+    # Align by iteration number (pad shorter histories with last value)
+    max_iterations = min(max(len(b) for b in all_backtrack_dapdbo + all_backtrack_aldo), focus_iterations)
+    
+    # D-APDB aligned
+    aligned_backtrack_dapdbo = []
+    for backtrack_vals in all_backtrack_dapdbo:
+        if len(backtrack_vals) >= max_iterations:
+            aligned_backtrack_dapdbo.append(backtrack_vals[:max_iterations])
+        else:
+            padded = np.pad(backtrack_vals, (0, max_iterations - len(backtrack_vals)), mode='edge')
+            aligned_backtrack_dapdbo.append(padded)
+    aligned_array_dapdbo = np.array(aligned_backtrack_dapdbo)
+    backtrack_dapdbo_iter_mean = np.mean(aligned_array_dapdbo, axis=0)
+    backtrack_dapdbo_iter_std = np.std(aligned_array_dapdbo, axis=0)
+    
+    # global-DATOS aligned
+    aligned_backtrack_aldo = []
+    for backtrack_vals in all_backtrack_aldo:
+        if len(backtrack_vals) >= max_iterations:
+            aligned_backtrack_aldo.append(backtrack_vals[:max_iterations])
+        else:
+            padded = np.pad(backtrack_vals, (0, max_iterations - len(backtrack_vals)), mode='edge')
+            aligned_backtrack_aldo.append(padded)
+    aligned_array_aldo = np.array(aligned_backtrack_aldo)
+    backtrack_aldo_iter_mean = np.mean(aligned_array_aldo, axis=0)
+    backtrack_aldo_iter_std = np.std(aligned_array_aldo, axis=0)
+    
+    # Plot
+    fig6, ax6 = plt.subplots(figsize=(10, 6))
+    iterations = np.arange(max_iterations)
+    
+    # D-APDB with shaded region
+    ax6.plot(iterations, backtrack_dapdbo_iter_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--', marker='o', markersize=4)
+    ax6.fill_between(iterations, 
+                      backtrack_dapdbo_iter_mean - backtrack_dapdbo_iter_std, 
+                      backtrack_dapdbo_iter_mean + backtrack_dapdbo_iter_std, 
+                      alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+    
+    # global-DATOS with shaded region
+    ax6.plot(iterations, backtrack_aldo_iter_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':', marker='s', markersize=4)
+    ax6.fill_between(iterations, 
+                      backtrack_aldo_iter_mean - backtrack_aldo_iter_std, 
+                      backtrack_aldo_iter_mean + backtrack_aldo_iter_std, 
+                      alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+    
+    ax6.set_title(f'Total Backtrack Iterations per Iteration (First {max_iterations} iterations, N={N}, n={n})', fontsize=14, fontweight='bold')
+    ax6.set_xlabel('Iteration Number')
+    ax6.set_ylabel('Total Backtrack Iterations (All Nodes)')
+    ax6.legend()
+    ax6.grid(True, alpha=0.3)
+    plt.tight_layout()
+    filename6 = os.path.join(subfolder_path, f"{base_filename}_backtrack.png")
+    plt.savefig(filename6, dpi=300, bbox_inches='tight')
+    print(f"Saved: {filename6}")
+    plt.close()
+    
+    # 7. Step Size (tau/alpha) Evolution
+    fig7, ax7 = plt.subplots(figsize=(10, 6))
+    # D-APD: tau (constant, no backtracking)
+    ax7.semilogy(grad_calls_dapd, tau_dapd_mean, lw=2, label='D-APD: $\\bar{\\tau}$ (mean)', color='blue')
+    ax7.fill_between(grad_calls_dapd,
+                     np.maximum(tau_dapd_mean - tau_dapd_std, 1e-12),
+                     tau_dapd_mean + tau_dapd_std,
+                     alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+    # D-APDB: tau (adaptive with backtracking)
+    ax7.semilogy(grad_calls_dapdbo, tau_dapdbo_mean, lw=2, label='D-APDB: $\\bar{\\tau}$ (mean)', color='red', linestyle='--')
+    ax7.fill_between(grad_calls_dapdbo,
+                     np.maximum(tau_dapdbo_mean - tau_dapdbo_std, 1e-12),
+                     tau_dapdbo_mean + tau_dapdbo_std,
+                     alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+    # global-DATOS: alpha (adaptive with backtracking)
+    ax7.semilogy(grad_calls_aldo, alpha_aldo_mean, lw=2, label='global-DATOS: $\\alpha$ (mean)', color='green', linestyle=':')
+    ax7.fill_between(grad_calls_aldo,
+                     np.maximum(alpha_aldo_mean - alpha_aldo_std, 1e-12),
+                     alpha_aldo_mean + alpha_aldo_std,
+                     alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+    ax7.set_title(f'Step Size Evolution (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
+    ax7.set_xlabel('Average Number of Gradient Calls per Node')
+    ax7.set_ylabel('Step Size ($\\tau$ or $\\alpha$)')
+    ax7.legend()
+    ax7.grid(True, alpha=0.3)
+    plt.tight_layout()
+    filename7 = os.path.join(subfolder_path, f"{base_filename}_stepsize.png")
+    plt.savefig(filename7, dpi=300, bbox_inches='tight')
+    print(f"Saved: {filename7}")
+    plt.close()
     
     print(f"\nAll figures saved in folder: {subfolder_path}")
 

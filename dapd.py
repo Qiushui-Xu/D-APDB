@@ -37,7 +37,8 @@ def d_apd_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
                               use_optimal_consensus_error=False, x_star=None,
                               neighbors_list=None, initialization_mode="connected",
                               B_theta=None, lambda_l1=None, initial_points=None,
-                              Q_list=None, q_list=None, tau_list=None):
+                              Q_list=None, q_list=None, tau_list=None,
+                              constant_list=None):
     """
     Distributed APD (D-APD) for convex QCQP with box constraints.
     
@@ -339,8 +340,11 @@ def d_apd_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
     # Otherwise, use aggregated objective
     if Q_list is not None:
         if q_list is not None:
-            # Node-specific with linear terms: φ(x) = sum_i [(1/2) x^T Q_i x + q_i^T x]
+            # Node-specific with linear terms: φ(x) = sum_i [(1/2) x^T Q_i x + q_i^T x + c_i]
             obj_init = sum(0.5 * x_bar_init @ (Q_i @ x_bar_init) + q_i @ x_bar_init for Q_i, q_i in zip(Q_list, q_list))
+            # Add constant terms if provided
+            if constant_list is not None:
+                obj_init += sum(constant_list)
         else:
             # Node-specific without linear terms: φ(x) = sum_i [(1/2) x^T Q_i x]
             obj_init = sum(0.5 * x_bar_init @ (Q_i @ x_bar_init) for Q_i in Q_list)
@@ -357,7 +361,8 @@ def d_apd_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
     cons_err_init = sum(np.linalg.norm(x[i] - x_bar_init) for i in range(N)) / N
     x_bar_norm_sq_init = np.dot(x_bar_init, x_bar_init)
     cons_err_sq_sum_init = sum(np.dot(x[i] - x_bar_init, x[i] - x_bar_init) for i in range(N))
-    hist.append((obj_init, max_viol_init, cons_err_init, avg_viol_init, subopt_init, 0.0, x_bar_norm_sq_init, cons_err_sq_sum_init))
+    avg_tau_init = np.mean(tau_list)
+    hist.append((obj_init, max_viol_init, cons_err_init, avg_viol_init, subopt_init, 0.0, x_bar_norm_sq_init, cons_err_sq_sum_init, avg_tau_init))
     
     # Main loop
     for k in range(max_iter):
@@ -436,8 +441,11 @@ def d_apd_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
         # Otherwise, use aggregated objective
         if Q_list is not None:
             if q_list is not None:
-                # Node-specific with linear terms: φ(x) = sum_i [(1/2) x^T Q_i x + q_i^T x]
+                # Node-specific with linear terms: φ(x) = sum_i [(1/2) x^T Q_i x + q_i^T x + c_i]
                 obj = sum(0.5 * x_bar @ (Q_i @ x_bar) + q_i @ x_bar for Q_i, q_i in zip(Q_list, q_list))
+                # Add constant terms if provided
+                if constant_list is not None:
+                    obj += sum(constant_list)
             else:
                 # Node-specific without linear terms: φ(x) = sum_i [(1/2) x^T Q_i x]
                 obj = sum(0.5 * x_bar @ (Q_i @ x_bar) for Q_i in Q_list)
@@ -463,9 +471,12 @@ def d_apd_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
         # Compute sum of squared consensus errors: sum_i ||x_i - x_bar||^2
         cons_err_sq_sum = sum(np.dot(x[i] - x_bar, x[i] - x_bar) for i in range(N))
         
+        # Compute average tau across all nodes
+        avg_tau = np.mean(tau_list)
+        
         # Store history with average gradient call count
-        # History format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, x_bar_norm_sq, cons_err_sq_sum)
-        hist.append((obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, x_bar_norm_sq, cons_err_sq_sum))
+        # History format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, x_bar_norm_sq, cons_err_sq_sum, avg_tau)
+        hist.append((obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, x_bar_norm_sq, cons_err_sq_sum, avg_tau))
             
         if verbose_every and (k % verbose_every == 0 or k == max_iter - 1):
             msg = f"iter {k:5d} | obj {obj:.6e} | maxV {max_viol:.2e} | avgV {avg_viol:.2e} | cons {cons_err:.2e} | eta {eta_k:.3f}"

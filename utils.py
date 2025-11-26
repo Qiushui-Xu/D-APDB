@@ -1491,7 +1491,7 @@ def generate_feasible_qcqp_l1(n, N, rng, neighbors_list=None, max_adjustment_ite
       * All elements sorted in decreasing order
     
     and bar{x}^i is defined as:
-    - bar{x}_j^i = 10 + xi_j^i
+    - bar{x}_j^i = 2 + xi_j^i
     - xi_j^i is uniformly sampled from [-1/(2*sqrt(n)), 1/(2*sqrt(n))]
     
     This function ensures:
@@ -1781,22 +1781,36 @@ def generate_feasible_qcqp_l1(n, N, rng, neighbors_list=None, max_adjustment_ite
         return Q_list, lambda_l1, A_list, b_list, c_list
 
 
-def generate_feasible_qp_l1(n, N, rng, neighbors_list=None):
+def generate_feasible_qp_l1(n, N, rng, neighbors_list=None, 
+                            gamma_mean=100.0, gamma_std_percent=0.8):
     """
     Generate a feasible QP problem with L1 regularization and node-specific objectives.
-    This uses the same objective generation logic as generate_feasible_qcqp_l1, but without constraints.
     
-    Centralized objective: ||x||_1 + (1/2) * sum_{i in N} x^T Q^i x
-    Per-node objective: (1/N) * ||x||_1 + (1/2) * x^T Q^i x
+    Per-node objective: (1/N) * ||x||_1 + (1/2) * (x - bar{x}^i)^T Q^i (x - bar{x}^i)
+    
+    Expanding the quadratic term:
+    (1/2) * (x - bar{x}^i)^T Q^i (x - bar{x}^i)
+    = (1/2) * x^T Q^i x - x^T Q^i bar{x}^i + (1/2) * (bar{x}^i)^T Q^i bar{x}^i
+    = (1/2) * x^T Q^i x + q^i^T x + c^i
+    
+    where:
+    - q^i = -Q^i bar{x}^i (linear term)
+    - c^i = (1/2) * (bar{x}^i)^T Q^i bar{x}^i (constant term)
+    
+    Centralized objective: ||x||_1 + (1/2) * sum_{i in N} (x - bar{x}^i)^T Q^i (x - bar{x}^i)
+    = ||x||_1 + (1/2) * x^T (sum Q^i) x + (sum q^i)^T x + sum c^i
     
     where Q^i = V^i * Gamma^i * (V^i)^T:
     - V^i is a random orthonormal matrix (V^i * (V^i)^T = I)
     - Gamma^i is a diagonal matrix with:
-      * First diagonal element: 5 * i (i from 1 to N)
+      * First diagonal element: sampled from Normal(gamma_mean, gamma_std_percent * gamma_mean), clipped to be >= 1
       * Last two diagonal elements: 0
       * Third-to-last diagonal element: 1
-      * Remaining n-4 elements: uniformly sampled from [1, 5*i]
+      * Remaining n-4 elements: uniformly sampled from [1, gamma_diag[0]]
       * All elements sorted in decreasing order
+    
+    and bar{x}^i is defined as:
+    - bar{x}_j^i is uniformly sampled from [0, 2]
     
     Parameters:
     -----------
@@ -1808,18 +1822,27 @@ def generate_feasible_qp_l1(n, N, rng, neighbors_list=None):
         Random number generator
     neighbors_list : list, optional
         Not used, kept for API consistency.
+    gamma_mean : float, default=30.0
+        Mean of the normal distribution for the first diagonal element of Gamma^i
+    gamma_std_percent : float, default=0.3
+        Standard deviation as a percentage of mean (std = gamma_std_percent * gamma_mean)
         
     Returns:
     --------
     Q_list : list of np.ndarray
         List of node-specific quadratic coefficient matrices Q^i (n x n)
     q_list : list of np.ndarray
-        List of node-specific linear coefficient vectors q_i (n,)
+        List of node-specific linear coefficient vectors q^i = -Q^i bar{x}^i (n,)
     lambda_l1 : float
         L1 regularization coefficient (1/N)
+    constant_list : list of float
+        List of node-specific constant terms c^i = (1/2) * (bar{x}^i)^T Q^i bar{x}^i
     """
     # L1 regularization coefficient
     lambda_l1 = 1.0 / N
+    
+    # Compute std from percentage of mean
+    gamma_std = gamma_std_percent * gamma_mean
     
     # Generate Q^i = V^i * Gamma^i * (V^i)^T for each node i
     Q_list = []
@@ -1832,10 +1855,13 @@ def generate_feasible_qp_l1(n, N, rng, neighbors_list=None):
         # Generate Gamma^i diagonal elements
         gamma_diag = np.zeros(n)
         
+        # First element: sampled from Normal(gamma_mean, gamma_std), clipped to >= 1
+        gamma_first = rng.normal(gamma_mean, gamma_std)
+        gamma_first = max(gamma_first, 1.0)  # Ensure it's at least 1
+        
         if n >= 4:
-            # First element: 5 * i
-            gamma_diag[0] = 5.0 * node_idx
-            # gamma_diag[0] = 2.0 * node_idx
+            # First element: from normal distribution
+            gamma_diag[0] = gamma_first
             
             # Last two elements: 0
             gamma_diag[n-1] = 0.0
@@ -1844,22 +1870,21 @@ def generate_feasible_qp_l1(n, N, rng, neighbors_list=None):
             # Third-to-last element: 1
             gamma_diag[n-3] = 1.0
             
-            # Remaining n-4 elements: uniformly sampled from [1, 5*i]
+            # Remaining n-4 elements: uniformly sampled from [1, gamma_first]
             if n > 4:
-                gamma_diag[1:n-3] = rng.uniform(1.0, 5.0 * node_idx, size=n-4)
-                # gamma_diag[1:n-3] = rng.uniform(1.0, 2.0 * node_idx, size=n-4)
+                gamma_diag[1:n-3] = rng.uniform(1.0, gamma_first, size=n-4)
         elif n == 3:
-            # For n=3: first=5*i, last two=0,1
-            gamma_diag[0] = 5.0 * node_idx
-            gamma_diag[1] = 1.0
+            # For n=3: first from normal, last two=0,1
+            gamma_diag[0] = gamma_first
+            gamma_diag[1] = 0.0
             gamma_diag[2] = 0.0
         elif n == 2:
-            # For n=2: first=5*i, last=0
-            gamma_diag[0] = 5.0 * node_idx
+            # For n=2: first from normal, last=0
+            gamma_diag[0] = gamma_first
             gamma_diag[1] = 0.0
         else:  # n == 1
-            # For n=1: just 5*i
-            gamma_diag[0] = 5.0 * node_idx
+            # For n=1: just from normal
+            gamma_diag[0] = gamma_first
         
         # Sort in decreasing order
         gamma_diag = np.sort(gamma_diag)[::-1]
@@ -1874,11 +1899,16 @@ def generate_feasible_qp_l1(n, N, rng, neighbors_list=None):
         
         Q_list.append(Q_i)
     
-    # Generate q_list with small random linear terms
-    q_scale = 0.1
-    q_list = [rng.standard_normal(n) * q_scale for _ in range(N)]
+    # Generate bar{x}^i for each node: each component sampled from [0, 2]
+    x_bar_list = [rng.uniform(0.0, 2.0, size=n) for _ in range(N)]
     
-    return Q_list, q_list, lambda_l1
+    # Compute q^i = -Q^i bar{x}^i (linear term from expanding (x - bar{x}^i)^T Q^i (x - bar{x}^i))
+    q_list = [-Q_list[i] @ x_bar_list[i] for i in range(N)]
+    
+    # Compute c^i = (1/2) * (bar{x}^i)^T Q^i bar{x}^i (constant term)
+    constant_list = [0.5 * x_bar_list[i] @ (Q_list[i] @ x_bar_list[i]) for i in range(N)]
+    
+    return Q_list, q_list, lambda_l1, constant_list
 
 
 def solve_qcqp_l1_ground_truth(Q_agg, lambda_l1, A_list, b_list, c_list, neighbors_list=None, verbose=True):
@@ -2485,60 +2515,63 @@ def generate_qp_with_l1(n, N, rng, lambda_l1=0.1):
     return Q_list, q_list, lambda_l1
 
 
-def solve_qp_l1_ground_truth(A0, b0, lambda_l1, neighbors_list=None):
+def solve_qp_l1_ground_truth(A0, b0, lambda_l1, neighbors_list=None, constant_term=0.0, use_centralized_scale=True):
     """
     Solve QP with l1 regularization using centralized solver
     
-    min 0.5 * x^T * A0 * x + b0^T * x + lambda_l1 * ||x||_1
-    s.t. x_i == x_j for all edges (i,j) in the network (consensus constraints)
+    Centralized scale (use_centralized_scale=True, default):
+        min sum_i [0.5 * x^T Q^i x + (q^i)^T x + c^i] + 1.0 * ||x||_1
+        
+    Per-node scale (use_centralized_scale=False):
+        min (1/N) * sum_i [0.5 * x^T Q^i x + (q^i)^T x + c^i] + (1/N) * ||x||_1
     
-    Note: The objective is f(x) + r(x) where
-    f(x) = 0.5 * x^T * A0 * x + b0^T * x and r(x) = lambda_l1 * ||x||_1
+    For problems generated by generate_feasible_qp_l1:
+    - A0 = (1/N) * sum_i Q^i (aggregated quadratic matrix, already averaged)
+    - b0 = (1/N) * sum_i q^i (aggregated linear term, already averaged)
+    - constant_term = (1/N) * sum_i c^i (aggregated constant, already averaged)
     
     Parameters:
     -----------
     A0 : np.ndarray
-        Quadratic coefficient matrix (n x n)
+        Aggregated quadratic coefficient matrix (n x n), equals (1/N) * sum_i Q^i
     b0 : np.ndarray
-        Linear coefficient vector (n,)
+        Aggregated linear coefficient vector (n,), equals (1/N) * sum_i q^i
     lambda_l1 : float
-        L1 regularization parameter
+        L1 regularization parameter (1/N for per-node)
     neighbors_list : list, optional
         Network topology for consensus constraints
+    constant_term : float, default=0.0
+        Aggregated constant term, equals (1/N) * sum_i c^i
+    use_centralized_scale : bool, default=True
+        If True, return objective in centralized scale (sum over nodes)
+        If False, return objective in per-node scale (averaged over nodes)
         
     Returns:
     --------
     x_star : np.ndarray
         Optimal solution
     f_star : float
-        Optimal objective value
+        Optimal objective value (in centralized or per-node scale)
     """
     n = A0.shape[0]
     N = len(neighbors_list) if neighbors_list is not None else 1
     
-    # Create variables for each node
-    x_vars = [cp.Variable(n) for _ in range(N)]
+    # Create a single variable (consensus problem)
+    x = cp.Variable(n)
     
-    # Objective: sum of local objectives with l1 regularization
-    # f_i(x) = (1/N)*(0.5 x^T A0 x + b0^T x), r(x) = lambda_l1 * ||x||_1
-    # Full objective: (1/N) * (0.5 x^T A0 x + b0^T x) + lambda_l1 * ||x||_1
-    # Since we have consensus constraints (x_i == x_j), we can use x_vars[0] for the L1 term
-    obj = 0
-    for i in range(N):
-        obj += 0.5 * cp.quad_form(x_vars[i], A0) + b0 @ x_vars[i]
-    obj = obj / N  # Average of local smooth objectives
-    obj += lambda_l1 * cp.norm(x_vars[0], 1)  # L1 regularization (same for all nodes due to consensus)
+    # Objective in centralized scale:
+    # sum_i [0.5 * x^T Q^i x + (q^i)^T x + c^i] + 1.0 * ||x||_1
+    # = N * [0.5 * x^T A0 x + b0^T x + constant_term] + 1.0 * ||x||_1
+    # (since A0 = (1/N)*sum Q^i, b0 = (1/N)*sum q^i, constant_term = (1/N)*sum c^i)
     
-    cons = []
+    # Smooth part: N * (0.5 * x^T A0 x + b0^T x)
+    smooth_obj = N * (0.5 * cp.quad_form(x, A0) + b0 @ x)
+    # L1 part: 1.0 * ||x||_1 (centralized coefficient)
+    l1_obj = 1.0 * cp.norm(x, 1)
+    # Total objective (excluding constant, added after)
+    obj = smooth_obj + l1_obj
     
-    # Consensus constraints: x_i == x_j for connected nodes
-    if neighbors_list is not None:
-        for i in range(N):
-            for j in neighbors_list[i]:
-                if i < j:  # Avoid duplicate constraints
-                    cons.append(x_vars[i] == x_vars[j])
-    
-    prob = cp.Problem(cp.Minimize(obj), cons)
+    prob = cp.Problem(cp.Minimize(obj))
     
     # Try solvers in order of preference
     solver_names = ["MOSEK", "ECOS", "SCS"]
@@ -2551,9 +2584,17 @@ def solve_qp_l1_ground_truth(A0, b0, lambda_l1, neighbors_list=None):
             prob.solve(solver=solver, verbose=False)
             print(f"Solver {solver_name} status: {prob.status}")
             if prob.status in ("optimal", "optimal_inaccurate"):
-                print(f"Solver {solver_name} succeeded with objective value: {prob.value}")
-                # Return the consensus solution
-                return x_vars[0].value.copy(), prob.value
+                # Add constant term (in centralized scale: N * constant_term)
+                centralized_constant = N * constant_term
+                total_obj_centralized = prob.value + centralized_constant
+                
+                if use_centralized_scale:
+                    print(f"Solver {solver_name} succeeded with objective value: {total_obj_centralized:.6f} (centralized scale)")
+                    return x.value.copy(), total_obj_centralized
+                else:
+                    total_obj_pernode = total_obj_centralized / N
+                    print(f"Solver {solver_name} succeeded with objective value: {total_obj_pernode:.6f} (per-node scale)")
+                    return x.value.copy(), total_obj_pernode
             else:
                 print(f"Solver {solver_name} failed with status: {prob.status}")
         except Exception as e:

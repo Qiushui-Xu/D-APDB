@@ -64,7 +64,7 @@ def linesearch_with_grad(alpha, f, grad_f_x1, x1, x2, d, delta):
             break
         else:
             # Shrink step size
-            alpha_plus = alpha_plus / 2.0
+            alpha_plus = alpha_plus * 0.9
             x_plus = x2 + alpha_plus * d
             t = t + 1
     
@@ -85,7 +85,7 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
                              use_optimal_consensus_error=False, x_star=None,
                              neighbors_list=None, initialization_mode="connected",
                              lambda_l1=None, initial_points=None,
-                             Q_list=None):
+                             Q_list=None, q_list=None, constant_list=None):
     """
     Decentralized Adaptive Three Operator Splitting (global_DATOS) for QCQP
     
@@ -155,16 +155,30 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
         print(W)
         print(f"W eigenvalues: {np.linalg.eigvals(W)}")
     
-    # Local smooth objective: if Q_list is provided, use node-specific objectives φ_i(x) = 0.5 x^T Q_i x
+    # Local smooth objective: if Q_list is provided, use node-specific objectives
+    # φ_i(x) = 0.5 x^T Q_i x + q_i^T x + c_i (if q_list and constant_list are provided)
     # otherwise fall back to aggregated objective φ_i(x) = (1/N)*(0.5 x^T A0 x + b0^T x + c0)
     if Q_list is not None:
         if len(Q_list) != N:
             raise ValueError(f"Q_list must have length N={N}, got {len(Q_list)}")
-        def phi_i_node(i, x):
-            return 0.5 * x @ (Q_list[i] @ x)
         
-        def grad_phi_i_node(i, x):
-            return Q_list[i] @ x
+        if q_list is not None:
+            # Node-specific with linear terms: φ_i(x) = 0.5 x^T Q_i x + q_i^T x + c_i
+            def phi_i_node(i, x):
+                val = 0.5 * x @ (Q_list[i] @ x) + q_list[i] @ x
+                if constant_list is not None:
+                    val += constant_list[i]
+                return val
+            
+            def grad_phi_i_node(i, x):
+                return Q_list[i] @ x + q_list[i]
+        else:
+            # Node-specific without linear terms: φ_i(x) = 0.5 x^T Q_i x
+            def phi_i_node(i, x):
+                return 0.5 * x @ (Q_list[i] @ x)
+            
+            def grad_phi_i_node(i, x):
+                return Q_list[i] @ x
     else:
         def phi_i_node(i, x):
             return (0.5 * x @ (A0 @ x) + b0 @ x + c0) / N
@@ -278,6 +292,26 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
     
     hist = []
     
+    # Record initial objective function value (before first iteration)
+    x_bar_init = np.mean(X, axis=0)
+    if Q_list is not None:
+        if q_list is not None:
+            obj_init = sum(0.5 * x_bar_init @ (Q_i @ x_bar_init) + q_i @ x_bar_init for Q_i, q_i in zip(Q_list, q_list))
+            if constant_list is not None:
+                obj_init += sum(constant_list)
+        else:
+            obj_init = sum(0.5 * x_bar_init @ (Q_i @ x_bar_init) for Q_i in Q_list)
+    else:
+        obj_init = 0.5 * x_bar_init @ (A0 @ x_bar_init) + b0 @ x_bar_init + c0
+    # For centralized objective, L1 coefficient should be 1.0
+    obj_init += 1.0 * np.linalg.norm(x_bar_init, 1)
+    subopt_init = abs(obj_init - phi_star) if phi_star is not None else np.nan
+    cons_err_init = sum(np.linalg.norm(X[i, :] - x_bar_init) for i in range(N)) / N
+    x_bar_norm_sq_init = np.dot(x_bar_init, x_bar_init)
+    cons_err_sq_sum_init = sum(np.dot(X[i, :] - x_bar_init, X[i, :] - x_bar_init) for i in range(N))
+    # History format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iterations, x_bar_norm_sq, cons_err_sq_sum, alpha)
+    hist.append((obj_init, 0.0, cons_err_init, 0.0, subopt_init, 0.0, 0, x_bar_norm_sq_init, cons_err_sq_sum_init, alpha_init))
+    
     for k in range(max_iter):
         # (S.1) Communication Step
         # X^{k+1/2} = W * X^k
@@ -358,13 +392,22 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
         max_viol = 0.0
         avg_viol = 0.0
         # Objective: φ(x) + r(x)
-        # φ(x) = 0.5 * x^T Q_i x (averaged across nodes if Q_list is None)
-        # r(x) = lambda_coeff * ||x||_1
+        # φ(x) = sum_i [(1/2) x^T Q_i x + q_i^T x + c_i] (if Q_list is provided)
+        # r(x) = ||x||_1 (centralized L1 coefficient is 1.0, not lambda_l1 = 1/N)
         if Q_list is not None:
-            obj = sum(0.5 * x_bar @ (Q_i @ x_bar) for Q_i in Q_list)
+            if q_list is not None:
+                # Node-specific with linear terms: φ(x) = sum_i [(1/2) x^T Q_i x + q_i^T x + c_i]
+                obj = sum(0.5 * x_bar @ (Q_i @ x_bar) + q_i @ x_bar for Q_i, q_i in zip(Q_list, q_list))
+                # Add constant terms if provided
+                if constant_list is not None:
+                    obj += sum(constant_list)
+            else:
+                # Node-specific without linear terms: φ(x) = sum_i [(1/2) x^T Q_i x]
+                obj = sum(0.5 * x_bar @ (Q_i @ x_bar) for Q_i in Q_list)
         else:
             obj = 0.5 * x_bar @ (A0 @ x_bar) + b0 @ x_bar + c0
-        obj += lambda_coeff * np.linalg.norm(x_bar, 1)
+        # For centralized objective, L1 coefficient should be 1.0, not lambda_l1 = 1/N
+        obj += 1.0 * np.linalg.norm(x_bar, 1)
         subopt = abs(obj - phi_star) if phi_star is not None else np.nan
         
         # Average gradient calls per node
@@ -377,8 +420,8 @@ def aldo_qcqp_merely_convex(A0, b0, c0,
         cons_err_sq_sum = sum(np.dot(X[i, :] - x_bar, X[i, :] - x_bar) for i in range(N))
         
         # Store history
-        # History format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iterations, x_bar_norm_sq, cons_err_sq_sum)
-        hist.append((obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iterations, x_bar_norm_sq, cons_err_sq_sum))
+        # History format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iterations, x_bar_norm_sq, cons_err_sq_sum, alpha)
+        hist.append((obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iterations, x_bar_norm_sq, cons_err_sq_sum, alpha_k))
         
         if verbose_every and (k % verbose_every == 0 or k == max_iter - 1):
             msg = f"iter {k:5d} | obj {obj:.6e} | maxV {max_viol:.2e} | avgV {avg_viol:.2e} | cons {cons_err:.2e} | alpha {alpha_k:.6f}"

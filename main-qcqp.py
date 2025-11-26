@@ -241,6 +241,9 @@ if __name__ == "__main__":
     
     # ==================== Run Multiple Simulations ====================
     num_simulations = 20
+    
+    # Visualization smoothing: clip shaded bands to central percentiles for readability
+    shade_percentile_bounds = (10, 90)  # Set to None to revert to mean ± std shading
     print(f"\n" + "="*80)
     print(f"Running {num_simulations} Simulations (i.i.d. random initializations)")
     print("="*80)
@@ -362,7 +365,7 @@ if __name__ == "__main__":
     print("Aggregating Results Across Simulations")
     print("="*80)
     
-    def aggregate_histories(all_histories, metric_idx):
+    def aggregate_histories(all_histories, metric_idx, percentile_clip=None):
         """
         Aggregate a specific metric across all simulations by aligning gradient calls.
         
@@ -373,6 +376,10 @@ if __name__ == "__main__":
         metric_idx : int
             Index of the metric in history tuple (0=obj, 1=maxV, 2=cons, 3=avgV, 4=subopt, 5=grad_calls, 6=backtrack)
             
+        percentile_clip : tuple(int, int) or None
+            Optional (low, high) percentiles used to clip the shaded band.
+            When None, the shaded region defaults to mean ± 1 std.
+        
         Returns:
         --------
         grad_calls_grid : np.ndarray
@@ -381,6 +388,10 @@ if __name__ == "__main__":
             Mean values across simulations
         std_values : np.ndarray
             Standard deviation across simulations
+        lower_band : np.ndarray
+            Lower edge for shaded visualization (percentile-based or mean - std)
+        upper_band : np.ndarray
+            Upper edge for shaded visualization (percentile-based or mean + std)
         """
         # Extract gradient calls and metric values for each simulation
         all_grad_calls = []
@@ -420,22 +431,57 @@ if __name__ == "__main__":
         mean_values = np.nanmean(interpolated_array, axis=0)
         std_values = np.nanstd(interpolated_array, axis=0)
         
-        return grad_calls_grid, mean_values, std_values
+        # Compute shaded band edges
+        if percentile_clip is not None:
+            low_p, high_p = percentile_clip
+            low_p = max(0, min(low_p, 100))
+            high_p = max(low_p, min(high_p, 100))
+            lower_band = np.nanpercentile(interpolated_array, low_p, axis=0)
+            upper_band = np.nanpercentile(interpolated_array, high_p, axis=0)
+        else:
+            lower_band = mean_values - std_values
+            upper_band = mean_values + std_values
+        
+        return grad_calls_grid, mean_values, std_values, lower_band, upper_band
     
     # Aggregate all metrics
-    grad_calls_dapd, objs_dapd_mean, objs_dapd_std = aggregate_histories(all_hist_dapd, 0)
-    _, maxV_dapd_mean, maxV_dapd_std = aggregate_histories(all_hist_dapd, 1)
-    _, cons_dapd_mean, cons_dapd_std = aggregate_histories(all_hist_dapd, 2)
-    _, avgV_dapd_mean, avgV_dapd_std = aggregate_histories(all_hist_dapd, 3)
-    _, subopt_dapd_mean, subopt_dapd_std = aggregate_histories(all_hist_dapd, 4)
-    _, x_bar_norm_sq_dapd_mean, x_bar_norm_sq_dapd_std = aggregate_histories(all_hist_dapd, 6)  # Index 6 for x_bar_norm_sq
-    _, cons_err_sq_sum_dapd_mean, cons_err_sq_sum_dapd_std = aggregate_histories(all_hist_dapd, 7)  # Index 7 for cons_err_sq_sum
+    grad_calls_dapd, objs_dapd_mean, objs_dapd_std, objs_dapd_lower, objs_dapd_upper = aggregate_histories(
+        all_hist_dapd, 0, percentile_clip=shade_percentile_bounds
+    )
+    _, maxV_dapd_mean, maxV_dapd_std, maxV_dapd_lower, maxV_dapd_upper = aggregate_histories(
+        all_hist_dapd, 1, percentile_clip=shade_percentile_bounds
+    )
+    _, cons_dapd_mean, cons_dapd_std, cons_dapd_lower, cons_dapd_upper = aggregate_histories(
+        all_hist_dapd, 2, percentile_clip=shade_percentile_bounds
+    )
+    _, avgV_dapd_mean, avgV_dapd_std, avgV_dapd_lower, avgV_dapd_upper = aggregate_histories(
+        all_hist_dapd, 3, percentile_clip=shade_percentile_bounds
+    )
+    _, subopt_dapd_mean, subopt_dapd_std, subopt_dapd_lower, subopt_dapd_upper = aggregate_histories(
+        all_hist_dapd, 4, percentile_clip=shade_percentile_bounds
+    )
+    _, x_bar_norm_sq_dapd_mean, x_bar_norm_sq_dapd_std, x_bar_norm_sq_dapd_lower, x_bar_norm_sq_dapd_upper = aggregate_histories(
+        all_hist_dapd, 6, percentile_clip=shade_percentile_bounds
+    )  # Index 6 for x_bar_norm_sq
+    _, cons_err_sq_sum_dapd_mean, cons_err_sq_sum_dapd_std, cons_err_sq_sum_dapd_lower, cons_err_sq_sum_dapd_upper = aggregate_histories(
+        all_hist_dapd, 7, percentile_clip=shade_percentile_bounds
+    )  # Index 7 for cons_err_sq_sum
     
-    grad_calls_dapdb, objs_dapdb_mean, objs_dapdb_std = aggregate_histories(all_hist_dapdb, 0)
-    _, maxV_dapdb_mean, maxV_dapdb_std = aggregate_histories(all_hist_dapdb, 1)
-    _, cons_dapdb_mean, cons_dapdb_std = aggregate_histories(all_hist_dapdb, 2)
-    _, avgV_dapdb_mean, avgV_dapdb_std = aggregate_histories(all_hist_dapdb, 3)
-    _, subopt_dapdb_mean, subopt_dapdb_std = aggregate_histories(all_hist_dapdb, 4)
+    grad_calls_dapdb, objs_dapdb_mean, objs_dapdb_std, objs_dapdb_lower, objs_dapdb_upper = aggregate_histories(
+        all_hist_dapdb, 0, percentile_clip=shade_percentile_bounds
+    )
+    _, maxV_dapdb_mean, maxV_dapdb_std, maxV_dapdb_lower, maxV_dapdb_upper = aggregate_histories(
+        all_hist_dapdb, 1, percentile_clip=shade_percentile_bounds
+    )
+    _, cons_dapdb_mean, cons_dapdb_std, cons_dapdb_lower, cons_dapdb_upper = aggregate_histories(
+        all_hist_dapdb, 2, percentile_clip=shade_percentile_bounds
+    )
+    _, avgV_dapdb_mean, avgV_dapdb_std, avgV_dapdb_lower, avgV_dapdb_upper = aggregate_histories(
+        all_hist_dapdb, 3, percentile_clip=shade_percentile_bounds
+    )
+    _, subopt_dapdb_mean, subopt_dapdb_std, subopt_dapdb_lower, subopt_dapdb_upper = aggregate_histories(
+        all_hist_dapdb, 4, percentile_clip=shade_percentile_bounds
+    )
     # For backtracking, aggregate by iteration number (not gradient calls)
     # Extract backtrack values for each simulation
     all_backtrack_values = []
@@ -461,8 +507,12 @@ if __name__ == "__main__":
     backtrack_dapdb_mean = np.mean(aligned_array, axis=0)
     backtrack_dapdb_std = np.std(aligned_array, axis=0)
     
-    _, x_bar_norm_sq_dapdb_mean, x_bar_norm_sq_dapdb_std = aggregate_histories(all_hist_dapdb, 7)  # Index 7 for x_bar_norm_sq
-    _, cons_err_sq_sum_dapdb_mean, cons_err_sq_sum_dapdb_std = aggregate_histories(all_hist_dapdb, 8)  # Index 8 for cons_err_sq_sum
+    _, x_bar_norm_sq_dapdb_mean, x_bar_norm_sq_dapdb_std, x_bar_norm_sq_dapdb_lower, x_bar_norm_sq_dapdb_upper = aggregate_histories(
+        all_hist_dapdb, 7, percentile_clip=shade_percentile_bounds
+    )  # Index 7 for x_bar_norm_sq
+    _, cons_err_sq_sum_dapdb_mean, cons_err_sq_sum_dapdb_std, cons_err_sq_sum_dapdb_lower, cons_err_sq_sum_dapdb_upper = aggregate_histories(
+        all_hist_dapdb, 8, percentile_clip=shade_percentile_bounds
+    )  # Index 8 for cons_err_sq_sum
     
     # Compute relative errors
     # Relative suboptimality: |f(x_bar) - f*| / |f*|
@@ -470,13 +520,21 @@ if __name__ == "__main__":
     if f_star_abs > 1e-10:
         rel_subopt_dapd = subopt_dapd_mean / f_star_abs
         rel_subopt_dapd_std = subopt_dapd_std / f_star_abs  # Standard deviation of relative suboptimality
+        rel_subopt_dapd_lower = np.maximum(subopt_dapd_lower / f_star_abs, 0.0)
+        rel_subopt_dapd_upper = np.maximum(subopt_dapd_upper / f_star_abs, 0.0)
         rel_subopt_dapdb = subopt_dapdb_mean / f_star_abs
         rel_subopt_dapdb_std = subopt_dapdb_std / f_star_abs  # Standard deviation of relative suboptimality
+        rel_subopt_dapdb_lower = np.maximum(subopt_dapdb_lower / f_star_abs, 0.0)
+        rel_subopt_dapdb_upper = np.maximum(subopt_dapdb_upper / f_star_abs, 0.0)
         
         # Log relative suboptimality: log((|varphi(x_bar^k) - optimal| / |optimal|) + 1)
         # = log(rel_subopt + 1)
         log_rel_subopt_dapd = np.log(rel_subopt_dapd + 1.0)
         log_rel_subopt_dapdb = np.log(rel_subopt_dapdb + 1.0)
+        log_rel_subopt_dapd_lower = np.log(rel_subopt_dapd_lower + 1.0)
+        log_rel_subopt_dapd_upper = np.log(rel_subopt_dapd_upper + 1.0)
+        log_rel_subopt_dapdb_lower = np.log(rel_subopt_dapdb_lower + 1.0)
+        log_rel_subopt_dapdb_upper = np.log(rel_subopt_dapdb_upper + 1.0)
         
         # Compute std for log relative suboptimality using error propagation
         # For z = log(a + 1) where a = rel_subopt, dz/da = 1/(a + 1)
@@ -486,12 +544,20 @@ if __name__ == "__main__":
     else:
         rel_subopt_dapd = np.full_like(subopt_dapd_mean, np.nan)
         rel_subopt_dapd_std = np.full_like(subopt_dapd_std, np.nan)
+        rel_subopt_dapd_lower = np.full_like(subopt_dapd_mean, np.nan)
+        rel_subopt_dapd_upper = np.full_like(subopt_dapd_mean, np.nan)
         rel_subopt_dapdb = np.full_like(subopt_dapdb_mean, np.nan)
         rel_subopt_dapdb_std = np.full_like(subopt_dapdb_std, np.nan)
+        rel_subopt_dapdb_lower = np.full_like(subopt_dapdb_mean, np.nan)
+        rel_subopt_dapdb_upper = np.full_like(subopt_dapdb_mean, np.nan)
         log_rel_subopt_dapd = np.full_like(subopt_dapd_mean, np.nan)
         log_rel_subopt_dapd_std = np.full_like(subopt_dapd_std, np.nan)
+        log_rel_subopt_dapd_lower = np.full_like(subopt_dapd_mean, np.nan)
+        log_rel_subopt_dapd_upper = np.full_like(subopt_dapd_mean, np.nan)
         log_rel_subopt_dapdb = np.full_like(subopt_dapdb_mean, np.nan)
         log_rel_subopt_dapdb_std = np.full_like(subopt_dapdb_std, np.nan)
+        log_rel_subopt_dapdb_lower = np.full_like(subopt_dapdb_mean, np.nan)
+        log_rel_subopt_dapdb_upper = np.full_like(subopt_dapdb_mean, np.nan)
     
     # Relative consensus error: ||x_i^k - x_bar^k||^2 / (N * ||x_bar^k||^2)
     # Compute mean and std for relative consensus error
@@ -499,6 +565,10 @@ if __name__ == "__main__":
     x_bar_norm_sq_dapdb_denom = N * np.maximum(x_bar_norm_sq_dapdb_mean, 1e-12)
     rel_cons_dapd = cons_err_sq_sum_dapd_mean / x_bar_norm_sq_dapd_denom
     rel_cons_dapdb = cons_err_sq_sum_dapdb_mean / x_bar_norm_sq_dapdb_denom
+    rel_cons_dapd_lower = cons_err_sq_sum_dapd_lower / (N * np.maximum(x_bar_norm_sq_dapd_upper, 1e-12))
+    rel_cons_dapd_upper = cons_err_sq_sum_dapd_upper / (N * np.maximum(x_bar_norm_sq_dapd_lower, 1e-12))
+    rel_cons_dapdb_lower = cons_err_sq_sum_dapdb_lower / (N * np.maximum(x_bar_norm_sq_dapdb_upper, 1e-12))
+    rel_cons_dapdb_upper = cons_err_sq_sum_dapdb_upper / (N * np.maximum(x_bar_norm_sq_dapdb_lower, 1e-12))
     
     # Compute std for relative consensus error using error propagation
     # For ratio z = a/b, std(z) ≈ |z| * sqrt((std(a)/a)^2 + (std(b)/b)^2)
@@ -524,6 +594,10 @@ if __name__ == "__main__":
     
     rel_maxV_dapd = maxV_dapd_mean / np.maximum(maxV_dapd_init, 1e-12)
     rel_maxV_dapdb = maxV_dapdb_mean / np.maximum(maxV_dapdb_init, 1e-12)
+    rel_maxV_dapd_lower = np.maximum(maxV_dapd_lower / np.maximum(maxV_dapd_init, 1e-12), 1e-12)
+    rel_maxV_dapd_upper = np.maximum(maxV_dapd_upper / np.maximum(maxV_dapd_init, 1e-12), 1e-12)
+    rel_maxV_dapdb_lower = np.maximum(maxV_dapdb_lower / np.maximum(maxV_dapdb_init, 1e-12), 1e-12)
+    rel_maxV_dapdb_upper = np.maximum(maxV_dapdb_upper / np.maximum(maxV_dapdb_init, 1e-12), 1e-12)
     
     # Compute std for relative constraint violation using error propagation
     # For ratio z = a/b, std(z) ≈ |z| * sqrt((std(a)/a)^2 + (std(b)/b)^2)
@@ -584,16 +658,22 @@ if __name__ == "__main__":
     
     base_filename = f"qcqp_comparison_{subfolder_name}"
     
+    # Legend label helper for shaded regions
+    if shade_percentile_bounds:
+        shade_label_text = f"{shade_percentile_bounds[0]}-{shade_percentile_bounds[1]} percentile band"
+    else:
+        shade_label_text = "±1 std"
+    
     # 1. Objective Function
     fig1, ax1 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
     ax1.plot(grad_calls_dapd, objs_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
-    ax1.fill_between(grad_calls_dapd, objs_dapd_mean - objs_dapd_std, objs_dapd_mean + objs_dapd_std, 
-                      alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+    ax1.fill_between(grad_calls_dapd, objs_dapd_lower, objs_dapd_upper, 
+                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
     # D-APDB with shaded region
     ax1.plot(grad_calls_dapdb, objs_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-    ax1.fill_between(grad_calls_dapdb, objs_dapdb_mean - objs_dapdb_std, objs_dapdb_mean + objs_dapdb_std, 
-                      alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+    ax1.fill_between(grad_calls_dapdb, objs_dapdb_lower, objs_dapdb_upper, 
+                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
     ax1.axhline(f_star, color='k', ls=':', alpha=0.5, label='$\\varphi^*$')
     ax1.set_title(f'Objective Function: $\\varphi(\\bar{{x}}^k)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax1.set_xlabel('Average Number of Gradient Calls per Node')
@@ -610,12 +690,12 @@ if __name__ == "__main__":
     fig2, ax2 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
     ax2.plot(grad_calls_dapd, cons_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
-    ax2.fill_between(grad_calls_dapd, cons_dapd_mean - cons_dapd_std, cons_dapd_mean + cons_dapd_std, 
-                      alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+    ax2.fill_between(grad_calls_dapd, cons_dapd_lower, cons_dapd_upper, 
+                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
     # D-APDB with shaded region
     ax2.plot(grad_calls_dapdb, cons_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-    ax2.fill_between(grad_calls_dapdb, cons_dapdb_mean - cons_dapdb_std, cons_dapdb_mean + cons_dapdb_std, 
-                      alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+    ax2.fill_between(grad_calls_dapdb, cons_dapdb_lower, cons_dapdb_upper, 
+                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
     ax2.set_title(f'Consensus Error: $\\frac{{1}}{{N}}\\sum_{{i=1}}^N \\|x_i^k - \\bar{{x}}^k\\|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax2.set_xlabel('Average Number of Gradient Calls per Node')
     ax2.set_ylabel('Consensus Error')
@@ -635,10 +715,10 @@ if __name__ == "__main__":
     if all_zero_dapd and all_zero_dapdb:
         # All constraints satisfied - use linear scale
         ax3.plot(grad_calls_dapd, maxV_dapd_mean, lw=2, label='D-APD (mean)', color='blue', marker='.', markersize=2)
-        ax3.fill_between(grad_calls_dapd, maxV_dapd_mean - maxV_dapd_std, maxV_dapd_mean + maxV_dapd_std, 
+        ax3.fill_between(grad_calls_dapd, maxV_dapd_lower, maxV_dapd_upper, 
                           alpha=0.2, color='blue')
         ax3.plot(grad_calls_dapdb, maxV_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--', marker='.', markersize=2)
-        ax3.fill_between(grad_calls_dapdb, maxV_dapdb_mean - maxV_dapdb_std, maxV_dapdb_mean + maxV_dapdb_std, 
+        ax3.fill_between(grad_calls_dapdb, maxV_dapdb_lower, maxV_dapdb_upper, 
                           alpha=0.2, color='red')
         ax3.set_yscale('linear')
         ax3.axhline(0, color='gray', ls=':', alpha=0.3)
@@ -649,13 +729,13 @@ if __name__ == "__main__":
         maxV_dapdb_plot = np.maximum(maxV_dapdb_mean, 1e-12)
         ax3.semilogy(grad_calls_dapd, maxV_dapd_plot, lw=2, label='D-APD (mean)', color='blue')
         ax3.fill_between(grad_calls_dapd, 
-                          np.maximum(maxV_dapd_mean - maxV_dapd_std, 1e-12), 
-                          maxV_dapd_mean + maxV_dapd_std, 
+                          np.maximum(maxV_dapd_lower, 1e-12), 
+                          np.maximum(maxV_dapd_upper, 1e-12), 
                           alpha=0.2, color='blue')
         ax3.semilogy(grad_calls_dapdb, maxV_dapdb_plot, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
         ax3.fill_between(grad_calls_dapdb, 
-                          np.maximum(maxV_dapdb_mean - maxV_dapdb_std, 1e-12), 
-                          maxV_dapdb_mean + maxV_dapdb_std, 
+                          np.maximum(maxV_dapdb_lower, 1e-12), 
+                          np.maximum(maxV_dapdb_upper, 1e-12), 
                           alpha=0.2, color='red')
         ax3.set_title(f'Constraint Violations: $\\max_{{i \\in N}} \\{{g_i(\\bar{{x}}^k)_+\\}}$ (Log Scale) (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     
@@ -674,12 +754,12 @@ if __name__ == "__main__":
         fig4, ax4 = plt.subplots(figsize=(10, 6))
         # D-APD with shaded region
         ax4.plot(grad_calls_dapd, subopt_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
-        ax4.fill_between(grad_calls_dapd, subopt_dapd_mean - subopt_dapd_std, subopt_dapd_mean + subopt_dapd_std, 
-                          alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+        ax4.fill_between(grad_calls_dapd, subopt_dapd_lower, subopt_dapd_upper, 
+                          alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
         # D-APDB with shaded region
         ax4.plot(grad_calls_dapdb, subopt_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-        ax4.fill_between(grad_calls_dapdb, subopt_dapdb_mean - subopt_dapdb_std, subopt_dapdb_mean + subopt_dapdb_std, 
-                          alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+        ax4.fill_between(grad_calls_dapdb, subopt_dapdb_lower, subopt_dapdb_upper, 
+                          alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
         ax4.set_title(f'Absolute Suboptimality: $|\\varphi(\\bar{{x}}^k) - \\varphi^*|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
         ax4.set_xlabel('Average Number of Gradient Calls per Node')
         ax4.set_ylabel('Suboptimality')
@@ -697,15 +777,15 @@ if __name__ == "__main__":
         # D-APD with shaded region
         ax5.semilogy(grad_calls_dapd, rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
         ax5.fill_between(grad_calls_dapd, 
-                          np.maximum(rel_subopt_dapd - rel_subopt_dapd_std, 1e-12), 
-                          rel_subopt_dapd + rel_subopt_dapd_std, 
-                          alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+                          np.maximum(rel_subopt_dapd_lower, 1e-12), 
+                          np.maximum(rel_subopt_dapd_upper, 1e-12), 
+                          alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
         # D-APDB with shaded region
         ax5.semilogy(grad_calls_dapdb, rel_subopt_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
         ax5.fill_between(grad_calls_dapdb, 
-                          np.maximum(rel_subopt_dapdb - rel_subopt_dapdb_std, 1e-12), 
-                          rel_subopt_dapdb + rel_subopt_dapdb_std, 
-                          alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+                          np.maximum(rel_subopt_dapdb_lower, 1e-12), 
+                          np.maximum(rel_subopt_dapdb_upper, 1e-12), 
+                          alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
         ax5.set_title(f'Relative Suboptimality: $|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
         ax5.set_xlabel('Average Number of Gradient Calls per Node')
         ax5.set_ylabel('Relative Suboptimality')
@@ -723,15 +803,15 @@ if __name__ == "__main__":
         # D-APD with shaded region
         ax5b.plot(grad_calls_dapd, log_rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
         ax5b.fill_between(grad_calls_dapd, 
-                          log_rel_subopt_dapd - log_rel_subopt_dapd_std, 
-                          log_rel_subopt_dapd + log_rel_subopt_dapd_std, 
-                          alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+                          log_rel_subopt_dapd_lower, 
+                          log_rel_subopt_dapd_upper, 
+                          alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
         # D-APDB with shaded region
         ax5b.plot(grad_calls_dapdb, log_rel_subopt_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
         ax5b.fill_between(grad_calls_dapdb, 
-                          log_rel_subopt_dapdb - log_rel_subopt_dapdb_std, 
-                          log_rel_subopt_dapdb + log_rel_subopt_dapdb_std, 
-                          alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+                          log_rel_subopt_dapdb_lower, 
+                          log_rel_subopt_dapdb_upper, 
+                          alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
         ax5b.set_title(f'Log Relative Suboptimality: $\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
         ax5b.set_xlabel('Average Number of Gradient Calls per Node')
         ax5b.set_ylabel('$\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$')
@@ -748,15 +828,15 @@ if __name__ == "__main__":
     # D-APD with shaded region
     ax6.semilogy(grad_calls_dapd, rel_cons_dapd, lw=2, label='D-APD (mean)', color='blue')
     ax6.fill_between(grad_calls_dapd, 
-                      np.maximum(rel_cons_dapd - rel_cons_dapd_std, 1e-12), 
-                      rel_cons_dapd + rel_cons_dapd_std, 
-                      alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+                      np.maximum(rel_cons_dapd_lower, 1e-12), 
+                      np.maximum(rel_cons_dapd_upper, 1e-12), 
+                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
     # D-APDB with shaded region
     ax6.semilogy(grad_calls_dapdb, rel_cons_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
     ax6.fill_between(grad_calls_dapdb, 
-                      np.maximum(rel_cons_dapdb - rel_cons_dapdb_std, 1e-12), 
-                      rel_cons_dapdb + rel_cons_dapdb_std, 
-                      alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+                      np.maximum(rel_cons_dapdb_lower, 1e-12), 
+                      np.maximum(rel_cons_dapdb_upper, 1e-12), 
+                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
     ax6.set_title(f'Relative Consensus Error: $\\|x_i^k - \\bar{{x}}^k\\|^2/(N\\|\\bar{{x}}^k\\|^2)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax6.set_xlabel('Average Number of Gradient Calls per Node')
     ax6.set_ylabel('Relative Consensus Error')
@@ -773,15 +853,15 @@ if __name__ == "__main__":
     # D-APD with shaded region
     ax7.semilogy(grad_calls_dapd, rel_maxV_dapd, lw=2, label='D-APD (mean)', color='blue')
     ax7.fill_between(grad_calls_dapd, 
-                      np.maximum(rel_maxV_dapd - rel_maxV_dapd_std, 1e-12), 
-                      rel_maxV_dapd + rel_maxV_dapd_std, 
-                      alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+                      np.maximum(rel_maxV_dapd_lower, 1e-12), 
+                      np.maximum(rel_maxV_dapd_upper, 1e-12), 
+                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
     # D-APDB with shaded region
     ax7.semilogy(grad_calls_dapdb, rel_maxV_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
     ax7.fill_between(grad_calls_dapdb, 
-                      np.maximum(rel_maxV_dapdb - rel_maxV_dapdb_std, 1e-12), 
-                      rel_maxV_dapdb + rel_maxV_dapdb_std, 
-                      alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+                      np.maximum(rel_maxV_dapdb_lower, 1e-12), 
+                      np.maximum(rel_maxV_dapdb_upper, 1e-12), 
+                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
     ax7.set_title(f'Relative Constraint Violation: $\\max_{{i\\in\\mathcal{{N}}}} \\|(g_i(\\bar{{x}}^k))_+\\|/\\max_{{i\\in\\mathcal{{N}}}} \\|(g_i(\\bar{{x}}^0))_+\\|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax7.set_xlabel('Average Number of Gradient Calls per Node')
     ax7.set_ylabel('Relative Constraint Violation')
