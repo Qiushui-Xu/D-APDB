@@ -1782,7 +1782,7 @@ def generate_feasible_qcqp_l1(n, N, rng, neighbors_list=None, max_adjustment_ite
 
 
 def generate_feasible_qp_l1(n, N, rng, neighbors_list=None, 
-                            gamma_mean=100.0, gamma_std_percent=0.8):
+                            gamma_mean=10.0, gamma_std_percent=0.1):
     """
     Generate a feasible QP problem with L1 regularization and node-specific objectives.
     
@@ -1900,13 +1900,115 @@ def generate_feasible_qp_l1(n, N, rng, neighbors_list=None,
         Q_list.append(Q_i)
     
     # Generate bar{x}^i for each node: each component sampled from [0, 2]
-    x_bar_list = [rng.uniform(0.0, 2.0, size=n) for _ in range(N)]
+    x_bar_list = [rng.uniform(0.0, 1.0, size=n) for _ in range(N)]
     
     # Compute q^i = -Q^i bar{x}^i (linear term from expanding (x - bar{x}^i)^T Q^i (x - bar{x}^i))
     q_list = [-Q_list[i] @ x_bar_list[i] for i in range(N)]
     
     # Compute c^i = (1/2) * (bar{x}^i)^T Q^i bar{x}^i (constant term)
     constant_list = [0.5 * x_bar_list[i] @ (Q_list[i] @ x_bar_list[i]) for i in range(N)]
+    
+    return Q_list, q_list, lambda_l1, constant_list
+
+
+def generate_feasible_qp_l1_w_std(n, N, rng, L_mean=10.0, L_std_percent=0.3):
+    """
+    Generate a feasible QP problem with L1 regularization and node-specific objectives.
+    
+    Per-node objective: (1/N) * ||x||_1 + (1/2) * x^T Q^i x + (q^i)^T x + c^i
+    
+    where:
+    - Q^i = Λ_i^T S_i Λ_i are positive semidefinite matrices
+      - Λ_i is a random orthonormal matrix
+      - S_i is a diagonal matrix with elements from [0, 100], with 0 included for merely convex
+      - ||Q_i||_2 is controlled to have mean L_mean and std L_std_percent * L_mean
+    - q^i are generated randomly with elements from standard Gaussian distribution
+    - c^i are generated randomly from Uniform[0, 1]
+    
+    Centralized objective: ||x||_1 + (1/2) * sum_{i in N} x^T Q^i x + sum (q^i)^T x + sum c^i
+    
+    Parameters:
+    -----------
+    n : int
+        Dimension of decision variable
+    N : int
+        Number of nodes
+    rng : np.random.Generator
+        Random number generator
+    L_mean : float, default=10.0
+        Target mean for ||Q_i||_2 (spectral norm / Lipschitz constant)
+    L_std_percent : float, default=0.3
+        Standard deviation as a percentage of mean (std = L_std_percent * L_mean)
+        
+    Returns:
+    --------
+    Q_list : list of np.ndarray
+        List of node-specific quadratic coefficient matrices Q^i (n x n)
+    q_list : list of np.ndarray
+        List of node-specific linear coefficient vectors q^i (n,)
+    lambda_l1 : float
+        L1 regularization coefficient (1/N)
+    constant_list : list of float
+        List of node-specific constant terms c^i
+    """
+    # L1 regularization coefficient
+    lambda_l1 = 1.0 / N
+    
+    # Compute std from percentage of mean
+    L_std = L_std_percent * L_mean
+    
+    # Generate Q^i = Λ_i^T S_i Λ_i for each node i
+    Q_list = []
+    L_actual_list = []  # Track actual ||Q_i||_2 values
+    
+    for i in range(N):
+        # Sample target ||Q_i||_2 from Normal(L_mean, L_std), clipped to be >= 0.1
+        L_target = rng.normal(L_mean, L_std)
+        L_target = max(L_target, 0.1)  # Ensure positive
+        
+        # Generate random orthonormal matrix Λ_i
+        Lambda_i = random_orthonormal(n, rng)
+        
+        # Generate diagonal matrix S_i with elements from [0, 100]
+        # Include 0 as minimum for merely convex (at least one zero eigenvalue)
+        s_diag = np.zeros(n)
+        
+        if n >= 2:
+            # Last element is 0 (for merely convex)
+            s_diag[n-1] = 0.0
+            
+            # First element will be scaled to achieve target L
+            # Other elements are uniformly sampled from [0, 100]
+            if n >= 3:
+                s_diag[1:n-1] = rng.uniform(0.0, 100.0, size=n-2)
+            
+            # Set first element to achieve target ||Q_i||_2 = L_target
+            # Since Q_i = Λ_i^T S_i Λ_i and Λ_i is orthonormal, ||Q_i||_2 = max(s_diag)
+            # We want max(s_diag) = L_target
+            s_diag[0] = L_target
+            
+            # Sort in decreasing order (largest eigenvalue first)
+            s_diag = np.sort(s_diag)[::-1]
+        else:
+            # n == 1: just use L_target
+            s_diag[0] = L_target
+        
+        # Construct S_i
+        S_i = np.diag(s_diag)
+        
+        # Construct Q^i = Λ_i^T S_i Λ_i
+        Q_i = Lambda_i.T @ S_i @ Lambda_i
+        # Ensure symmetry
+        Q_i = 0.5 * (Q_i + Q_i.T)
+        
+        Q_list.append(Q_i)
+        L_actual_list.append(np.linalg.norm(Q_i, ord=2))
+    
+    # Generate q^i for each node: elements from standard Gaussian
+    q_list = [rng.standard_normal(n) for _ in range(N)]
+    
+    # Generate c^i for each node: from Uniform[0, 1]
+    constant_list = [float(rng.uniform(0.0, 1.0)) for _ in range(N)]
     
     return Q_list, q_list, lambda_l1, constant_list
 

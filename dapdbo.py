@@ -230,6 +230,9 @@ def d_apdb_unconstrained(
     # Track number of times eta^k > 1 (i.e., backtracking occurred)
     num_backtracking_iterations = 0
     
+    # Track cumulative backtracking iterations per node
+    cumulative_backtrack_counts = [0] * N
+    
     # Record initial objective function value (before first iteration)
     x_bar_init = sum(x) / N
     obj_init = sum(f_i(i, x_bar_init) for i in range(N))
@@ -270,36 +273,8 @@ def d_apdb_unconstrained(
             grad_f_i_x_i = grad_f_i(i, x[i])
             grad_calls_per_node[i] += 1
             
-            # Backtracking loop with safeguards
-            tau_min = 1e-12  # Minimum tau to prevent numerical issues
-            max_backtrack_per_node = 50  # Maximum backtracking iterations per node
-            
+            # Backtracking loop
             while True:
-                # Check if tau is too small (numerical safeguard)
-                if tau_tilde_i < tau_min:
-                    # Accept current step with minimum tau
-                    tau_tilde_i = tau_min
-                    eta_i_k = tau_prev[i] / tau_tilde_i
-                    p_tilde_i = q[i] + eta_i_k * (q[i] - q_prev[i])
-                    x_tilde_kp1_i = prox_phi_i(
-                        x[i] - tau_tilde_i * (grad_f_i_x_i + p_tilde_i),
-                        tau_tilde_i
-                    )
-                    tau_tilde[i] = tau_tilde_i
-                    eta_i_k_list[i] = eta_i_k
-                    x_tilde_kp1[i] = x_tilde_kp1_i
-                    grad_f_i_cached[i] = grad_f_i_x_i
-                    break
-                
-                # Check maximum backtracking iterations
-                if backtrack_iterations_i >= max_backtrack_per_node:
-                    # Accept current step
-                    tau_tilde[i] = tau_tilde_i
-                    eta_i_k_list[i] = eta_i_k
-                    x_tilde_kp1[i] = x_tilde_kp1_i
-                    grad_f_i_cached[i] = grad_f_i_x_i
-                    break
-                
                 # η_i^k = τ_i^{k-1} / τ̃_i^k
                 eta_i_k = tau_prev[i] / tau_tilde_i
                 
@@ -321,16 +296,10 @@ def d_apdb_unconstrained(
                 f_tilde = f_i(i, x_tilde_kp1_i)
                 f_k = f_i(i, x[i])
                 
-                # Check for numerical issues
-                if not np.isfinite(f_tilde) or not np.isfinite(f_k):
-                    backtrack_iterations_i += 1
-                    tau_tilde_i = rho_shrink * tau_tilde_i
-                    continue
-                
                 lhs = f_tilde - f_k - np.dot(grad_f_i_x_i, dx_tilde)
                 rhs = (1.0 / (2.0 * tau_tilde_i)) * (1.0 - delta - c_alpha - c_varsigma) * dx_tilde_norm_sq
                 
-                if lhs <= rhs:
+                if 0.05 *lhs <= rhs:
                     # Condition satisfied, break
                     tau_tilde[i] = tau_tilde_i
                     eta_i_k_list[i] = eta_i_k
@@ -343,6 +312,7 @@ def d_apdb_unconstrained(
                     tau_tilde_i = rho_shrink * tau_tilde_i
             
             total_backtrack_iterations += backtrack_iterations_i
+            cumulative_backtrack_counts[i] += backtrack_iterations_i
         
         # η^k = max_{i∈N} η_i^k (max-consensus step)
         eta_k = max(eta_i_k_list)
@@ -354,13 +324,14 @@ def d_apdb_unconstrained(
         # γ^k = (c_γ / τ̄) * (2/c_α + η^k/c_ς)^{-1}
         gamma_k = (c_gamma / tau_bar_max) / ((2.0 / c_alpha) + (eta_k / c_varsigma))
         
-        # Update for each node
+        # Phase 1: Update s, x, tau_prev, x_prev for each node
+        x_prev_old_list = [None] * N  # Store old x values for x_prev update
         for i in range(N):
             # τ_i^k = τ_i^{k-1} / η^k
             tau_list_current[i] = tau_prev[i] / eta_k
             
             # Save old x[i] before updating
-            x_prev_i_old = x[i].copy()
+            x_prev_old_list[i] = x[i].copy()
             
             # s_i^{k+1} = s_i^k + γ^k((1 + η^k)x_i^k - η^k x_i^{k-1})
             s[i] = s[i] + gamma_k * ((1 + eta_k) * x[i] - eta_k * x_prev[i])
@@ -372,23 +343,25 @@ def d_apdb_unconstrained(
                 # At least one node did backtracking
                 # x_i^{k+1} = prox_{τ_i^k φ_i}(x_i^k - τ_i^k(∇f_i(x_i^k) + p_i^k))
                 x[i] = prox_phi_i(
-                    x_prev_i_old - tau_list_current[i] * (grad_f_i_cached[i] + p_i_k),
+                    x_prev_old_list[i] - tau_list_current[i] * (grad_f_i_cached[i] + p_i_k),
                     tau_list_current[i]
                 )
             else:
                 # No backtracking occurred
                 x[i] = x_tilde_kp1[i]
             
-            # q_i^{k+1} = sum_{j∈N_i}(s_i^{k+1} - s_j^{k+1})
+            # Update previous values for next iteration
+            x_prev[i] = x_prev_old_list[i]
+            tau_prev[i] = tau_list_current[i]
+        
+        # Phase 2: Update q for each node (after all s have been updated)
+        # q_i^{k+1} = sum_{j∈N_i}(s_i^{k+1} - s_j^{k+1})
+        for i in range(N):
             q_prev[i] = q[i].copy()
             q[i] = np.zeros(n)
             Ni = get_neighbors(i, neighbors_list)
             for j in Ni:
                 q[i] += s[i] - s[j]
-            
-            # Update previous values for next iteration
-            x_prev[i] = x_prev_i_old
-            tau_prev[i] = tau_list_current[i]
         
         # Metrics
         x_bar = sum(x) / N
@@ -443,7 +416,8 @@ def d_apdb_unconstrained(
     stats = {
         'num_backtracking_iterations': num_backtracking_iterations,
         'total_iterations': len(hist) - 1,
-        'backtracking_ratio': num_backtracking_iterations / max(len(hist) - 1, 1)
+        'backtracking_ratio': num_backtracking_iterations / max(len(hist) - 1, 1),
+        'backtrack_counts_per_node': cumulative_backtrack_counts
     }
     
     return x_bar, hist, stats

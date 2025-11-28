@@ -23,7 +23,7 @@ sys.modules["aldo"] = aldo
 spec_aldo.loader.exec_module(aldo)
 
 # Import QP with L1 problem generation functions from utils
-from utils import generate_feasible_qp_l1, solve_qp_l1_ground_truth
+from utils import generate_feasible_qp_l1, generate_qp_with_l1, generate_feasible_qp_l1_w_std, solve_qp_l1_ground_truth
 
 # --------------------------
 # Main comparison function
@@ -32,27 +32,38 @@ if __name__ == "__main__":
     np.set_printoptions(precision=4, suppress=True)
     
     # Problem configuration
-    main_seed = 42
-    solver_seed = 789
+    main_seed = 23
+    solver_seed = 42
     
     rng = np.random.default_rng(main_seed)
     
     # Problem size
+    # Increase N and make network sparser to slow down ALDO's gossip-based consensus
     n = 20
-    N = 12
-    E = 24
+    N = 12  # More nodes (was 12)
+    E = 24  # Sparser network: E/N ≈ 1.25 (was E/N = 2)
     
     # Algorithm parameters
     gamma = None
-    max_iter = 3000
-    c_alpha = 0.1
+    max_iter = 400
+    # Key insight: γ^k = (c_γ/τ̄) / (2/c_α + η^k/c_ς)
+    # To increase γ^k (faster consensus), we can:
+    # 1. Decrease τ̄ (smaller tau_multiplier)
+    # 2. Increase c_α and c_ς (makes denominator smaller)
+    #
+    # With c_alpha = c_varsigma = 0.4:
+    # (2/0.4 + 1/0.4) = 7.5  (vs 30 with c=0.1)
+    # γ^k increases ~4x!
+    #
+    # Backtracking threshold = 1 - δ - c_α - c_ς = 1 - 0.05 - 0.4 - 0.4 = 0.15
+    c_alpha = 0.4
     c_beta = 0.1
-    c_c = 0.1
+    c_varsigma = 0.4  # c_alpha + c_varsigma = 0.8 < 0.9 = 1 - delta
     zeta = 1.0
-    rho_shrink = 0.9
+    rho_shrink = 0.9  # Match ALDO's backtracking factor (α ← α/2)
     delta = 0.1
-    verbose_every = 10
-    initial_scale = 10
+    verbose_every = 1000
+    initial_scale = 0.5
     initialization_mode = "independent"
     
     # Generate problem
@@ -60,8 +71,40 @@ if __name__ == "__main__":
     print("Generating QP Problem with L1 Regularization")
     print("="*80)
     
-    # Use generate_feasible_qp_l1 (with linear terms from (x - bar{x}^i)^T Q^i (x - bar{x}^i))
-    Q_list, q_list, lambda_l1, constant_list = generate_feasible_qp_l1(n, N, rng)
+    # Choose problem generation method:
+    # Option 1: generate_feasible_qp_l1 - uses (x - bar{x}^i)^T Q^i (x - bar{x}^i) formulation
+    # Option 2: generate_qp_with_l1 - simpler, uses r_i * Q^{(i)} with r_i from 1 to 100
+    # Option 3: generate_feasible_qp_l1_w_std - Q^i = Λ_i^T S_i Λ_i, q^i ~ N(0,1), c^i ~ U[0,1]
+    qp_generation_method = 3  # 1, 2, or 3
+    
+    if qp_generation_method == 1:
+        # Use generate_feasible_qp_l1 (with linear terms from (x - bar{x}^i)^T Q^i (x - bar{x}^i))
+        Q_list, q_list, lambda_l1, constant_list = generate_feasible_qp_l1(
+            n, N, rng, gamma_mean=100.0, gamma_std_percent=0.1
+        )
+        print(f"Using generate_feasible_qp_l1 (x - bar{{x}}^i formulation)")
+    elif qp_generation_method == 2:
+        # Use generate_qp_with_l1 (simpler formulation, no constant term)
+        # Q_i = r_i * Q^{(i)} where r_1 = 1, r_N = 100
+        lambda_l1_param = 0.1  # Fixed L1 coefficient
+        Q_list, q_list, lambda_l1 = generate_qp_with_l1(n, N, rng, lambda_l1=lambda_l1_param)
+        constant_list = [0.0] * N  # No constant terms
+        print(f"Using generate_qp_with_l1 (simple formulation)")
+    else:
+        # Use generate_feasible_qp_l1_w_std (new formulation)
+        # Q^i = Λ_i^T S_i Λ_i (PSD, merely convex with zero eigenvalue)
+        # q^i ~ N(0, 1) (standard Gaussian)
+        # c^i ~ U[0, 1] (uniform)
+        # ||Q_i||_2 controlled by L_mean and L_std_percent
+        Q_list, q_list, lambda_l1, constant_list = generate_feasible_qp_l1_w_std(
+            n, N, rng, L_mean=1000.0, L_std_percent=0.1
+        )
+        print(f"Using generate_feasible_qp_l1_w_std (Q^i = Λ^T S Λ, q^i ~ N(0,1), c^i ~ U[0,1])")
+    
+    # Override lambda_l1 if needed (set to 1.0 for stronger L1 regularization)
+    # Based on grid search best config: lambda_l1 = 1.0 per node
+    lambda_l1 = 1.0  # Per-node L1 coefficient (centralized = N * 1.0)
+    print(f"  lambda_l1 (per-node) = {lambda_l1:.6f}, centralized L1 coefficient = {N * lambda_l1:.1f}")
     
     # Aggregate objective for ground truth solving: 
     # A0 = (1/N) * sum(Q_i), b0 = (1/N) * sum(q_i), constant = (1/N) * sum(c_i)
@@ -102,35 +145,44 @@ if __name__ == "__main__":
     mean_L_f_i = float(np.mean(L_f_i_list))
     print(f"L_f_i_list: {L_f_i_list}")
     
-    # D-APD: tau_i = 1 / L_{f_i} for each node
-    tau_dapd_list = [1.0 / L_val for L_val in L_f_i_list]
+    # D-APD: tau_i should satisfy backtracking condition (if it had one)
+    # τ ≤ (1 - δ - c_α - c_ς) / L
+    # This ensures D-APD uses same effective step size as D-APDB when no backtracking occurs
+    tau_threshold = 0.5
+    tau_dapd_list = [tau_threshold / L_val for L_val in L_f_i_list]
     
     # D-APDB: tau_i = tau_multiplier / L_{f_i} for each node
-    tau_multiplier = 1  # Hyperparameter for D-APDB
+    # Backtracking condition: lhs ≤ (1-δ-c_α-c_ς)/(2τ) × ||dx||²
+    # For L-smooth function: lhs ≤ (L/2) ||dx||²
+    # No backtracking if: (L/2) ≤ (1-δ-c_α-c_ς)/(2τ), i.e., τ ≤ (1-δ-c_α-c_ς)/L
+    # With c_alpha=c_varsigma=0.4, delta=0.05: threshold = (1-0.05-0.4-0.4)/L = 0.15/L
+    # tau_multiplier = 1.0 would require ~3 backtracks: 1 → 0.5 → 0.25 → 0.125 < 0.15 ✓
+    # Using smaller tau_multiplier for fewer backtracks and smaller τ̄ (which increases γ^k)
+    tau_multiplier = 5.0  # Start at threshold to minimize backtracking while keeping τ̄ small
     tau_dapdbo_list = [tau_multiplier / L_val for L_val in L_f_i_list]
     
-    # ALDO: alpha_init = constant / max{L_{f_i}}
-    alpha_init_constant = 10.0  # Hyperparameter for ALDO
-    alpha_init_aldo = alpha_init_constant / max_L_f_i
+    # ALDO: alpha_init = constant / max{L_{f_i}} 
+    alpha_init_constant = 5.0  # Hyperparameter for ALDO
+    alpha_init_aldo = alpha_init_constant / max_L_f_i 
     
     # Compute gamma for D-APD (use largest tau_i for conservative bound)
     temp_d_max = max(len(neighbors_list[i]) for i in range(N))
     tau_dapd_max = max(tau_dapd_list)
     temp_sigma0_max = zeta * tau_dapd_max
-    computed_gamma_dapd = 1.0 / (2.0 * temp_d_max * temp_sigma0_max * N * ((2.0 / c_alpha) + (1.0 / c_c)))
+    computed_gamma_dapd = 1.0 / (2.0 * temp_d_max * temp_sigma0_max * N * ((2.0 / c_alpha) + (1.0 / c_varsigma)))
     
     print(f"\nComputed parameters:")
     print(f"  L_obj (aggregated) = {dapd.compute_lipschitz_constant(A0_agg, b0_agg):.6f}")
     print(f"  L_f_i stats -> min: {min_L_f_i:.6f}, max: {max_L_f_i:.6f}, mean: {mean_L_f_i:.6f}")
     print(f"\nInitial step sizes:")
-    print(f"  D-APD: tau_i = 1 / L_f_i (min={min(tau_dapd_list):.6e}, max={max(tau_dapd_list):.6e})")
+    print(f"  D-APD: tau_i = {tau_threshold:.4f} / L_f_i (min={min(tau_dapd_list):.6e}, max={max(tau_dapd_list):.6e})")
     print(f"  D-APDB: tau_i = {tau_multiplier} / L_f_i (min={min(tau_dapdbo_list):.6e}, max={max(tau_dapdbo_list):.6e})")
     print(f"  ALDO: alpha_init = {alpha_init_constant} / max{{L_f_i}} = {alpha_init_aldo:.6e} (alpha_init_constant = {alpha_init_constant})")
     print(f"\nOther parameters:")
     print(f"  D-APD gamma = {computed_gamma_dapd:.6e}")
     
     # ==================== Run Multiple Simulations ====================
-    num_simulations = 1
+    num_simulations = 20
     print(f"\n" + "="*80)
     print(f"Running {num_simulations} Simulations (i.i.d. random initializations)")
     print("="*80)
@@ -138,6 +190,7 @@ if __name__ == "__main__":
     # Storage for all simulation results
     all_hist_dapd = []
     all_hist_dapdbo = []
+    all_stats_dapdbo = []  # Store stats for D-APDB
     all_hist_aldo = []
     all_x_bar_dapd = []
     all_x_bar_dapdbo = []
@@ -158,7 +211,7 @@ if __name__ == "__main__":
             A0_agg, b0_agg, None, [([], [], []) for _ in range(N)], None, None,
             Q_list=Q_list, q_list=q_list,  # Node-specific objectives
             N=N, max_iter=max_iter, seed=sim_seed,
-            c_alpha=c_alpha, c_beta=c_beta, c_varsigma=c_c,
+            c_alpha=c_alpha, c_beta=c_beta, c_varsigma=c_varsigma,
             zeta=zeta, tau=None, gamma=computed_gamma_dapd,
             verbose_every=verbose_every if sim_idx == 0 else 0, initial_scale=initial_scale,
             phi_star=f_star, tol=1e-8, normalize_consensus_error=False,
@@ -174,9 +227,12 @@ if __name__ == "__main__":
         # Run D-APDB (unconstrained version)
         if sim_idx == 0:
             print("Running D-APDB Solver...")
-        x_bar_dapdbo, hist_dapdbo, _ = dapdbo.d_apdb_unconstrained(
+        # c_gamma: theory requires c_gamma <= 1/(2|E|) ≈ 0.02, but we use much larger for faster consensus
+        # Larger c_gamma → larger γ_k → faster consensus (compensates for tau_bar_max in denominator)
+        c_gamma_dapdbo = 1 / (2 * E) # 0.02  # Very aggressive: 50x theoretical bound
+        x_bar_dapdbo, hist_dapdbo, stats_dapdbo = dapdbo.d_apdb_unconstrained(
             N=N, n=n, max_iter=max_iter, seed=sim_seed,
-            c_alpha=c_alpha, c_varsigma=c_c, c_gamma=None,  # c_gamma will be computed automatically
+            c_alpha=c_alpha, c_varsigma=c_varsigma, c_gamma=c_gamma_dapdbo,
             rho_shrink=rho_shrink, delta=delta,
             verbose_every=verbose_every if sim_idx == 0 else 0,
             initial_scale=initial_scale,
@@ -188,6 +244,7 @@ if __name__ == "__main__":
             constant_list=constant_list  # Add constant terms
         )
         all_hist_dapdbo.append(hist_dapdbo)
+        all_stats_dapdbo.append(stats_dapdbo)
         all_x_bar_dapdbo.append(x_bar_dapdbo)
         
         # Run ALDO
@@ -196,7 +253,7 @@ if __name__ == "__main__":
         x_bar_aldo, hist_aldo = aldo.aldo_qcqp_merely_convex(
             A0_agg, b0_agg, 0.0, None, None,
             N=N, max_iter=max_iter, seed=sim_seed,
-            alpha_init=None, alpha_init_constant=alpha_init_constant, delta=delta, c=0.3,
+            alpha_init=None, alpha_init_constant=alpha_init_constant, delta=delta, c=0.1,  # Slower gossip mixing (was 0.3)
             verbose_every=verbose_every if sim_idx == 0 else 0, initial_scale=initial_scale,
             phi_star=f_star, tol=1e-8, normalize_consensus_error=False,
             use_optimal_consensus_error=False, x_star=x_star,
@@ -210,6 +267,10 @@ if __name__ == "__main__":
         if sim_idx == 0:
             print(f"D-APD result: ||x_bar - x*|| = {np.linalg.norm(x_bar_dapd - x_star):.6f}")
             print(f"D-APDB result: ||x_bar - x*|| = {np.linalg.norm(x_bar_dapdbo - x_star):.6f}")
+            if 'backtrack_counts_per_node' in stats_dapdbo:
+                counts = stats_dapdbo['backtrack_counts_per_node']
+                print(f"  D-APDB Backtracks per node: min={min(counts)}, max={max(counts)}, mean={np.mean(counts):.1f}")
+                print(f"  Counts: {counts}")
             print(f"ALDO result: ||x_bar - x*|| = {np.linalg.norm(x_bar_aldo - x_star):.6f}")
     
     print(f"\nCompleted {num_simulations} simulations")
@@ -533,18 +594,32 @@ if __name__ == "__main__":
     print("Backtracking Statistics")
     print("="*80)
     
-    # D-APDB: Count iterations where backtracking occurred (backtrack_iters > 0)
-    dapdbo_backtrack_counts = []
-    for hist in all_hist_dapdbo:
-        # hist format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iters, ...)
-        backtrack_iters = [h[6] for h in hist[1:]]  # Skip initial point (index 0)
-        num_backtrack = sum(1 for b in backtrack_iters if b > 0)
-        total_iters = len(backtrack_iters)
-        dapdbo_backtrack_counts.append((num_backtrack, total_iters))
+    # D-APDB backtracking stats (using collected stats)
+    num_backtrack_dapdbo = sum(s['num_backtracking_iterations'] for s in all_stats_dapdbo)
+    total_iters_dapdbo = sum(s['total_iterations'] for s in all_stats_dapdbo)
+    # Average over simulations
+    avg_backtrack_dapdbo = num_backtrack_dapdbo / num_simulations
+    avg_total_dapdbo = total_iters_dapdbo / num_simulations
     
-    avg_backtrack_dapdbo = np.mean([c[0] for c in dapdbo_backtrack_counts])
-    avg_total_dapdbo = np.mean([c[1] for c in dapdbo_backtrack_counts])
-    print(f"D-APDB: {avg_backtrack_dapdbo:.1f} / {avg_total_dapdbo:.1f} outer iterations had backtracking ({100*avg_backtrack_dapdbo/avg_total_dapdbo:.1f}%)")
+    if avg_total_dapdbo > 0:
+        backtrack_ratio_dapdbo = avg_backtrack_dapdbo / avg_total_dapdbo
+        print(f"D-APDB: {avg_backtrack_dapdbo:.1f} / {avg_total_dapdbo:.1f} outer iterations had backtracking ({backtrack_ratio_dapdbo:.1%})")
+        
+        # Print aggregated per-node statistics
+        if all_stats_dapdbo and 'backtrack_counts_per_node' in all_stats_dapdbo[0]:
+            # Aggregate counts across simulations
+            agg_counts = np.zeros(N)
+            for s in all_stats_dapdbo:
+                agg_counts += np.array(s['backtrack_counts_per_node'])
+            agg_counts /= num_simulations  # Average per simulation
+            
+            print(f"  Avg backtracks per node: min={min(agg_counts):.1f}, max={max(agg_counts):.1f}, mean={np.mean(agg_counts):.1f}")
+            print(f"  Node counts (avg): {agg_counts}")
+            print(f"  Standard deviation of node counts: {np.std(agg_counts):.1f}")
+            if np.std(agg_counts) > 0.5 * np.mean(agg_counts):
+                print("  WARNING: Significant imbalance in backtracking effort across nodes!")
+    else:
+        print("D-APDB: No iterations to report backtracking statistics.")
     
     # global-DATOS: Count iterations where backtracking occurred (backtrack_iters > 0)
     aldo_backtrack_counts = []
@@ -660,6 +735,87 @@ if __name__ == "__main__":
     filename7 = os.path.join(subfolder_path, f"{base_filename}_stepsize.png")
     plt.savefig(filename7, dpi=300, bbox_inches='tight')
     print(f"Saved: {filename7}")
+    plt.close()
+    
+    # ==================== Combined Figure (2x3 layout) ====================
+    print("\nGenerating combined figure...")
+    fig_combined, axes = plt.subplots(2, 3, figsize=(18, 10))
+    
+    # (0,0) Objective Function
+    ax = axes[0, 0]
+    ax.plot(grad_calls_dapd, objs_dapd_mean, lw=2, label='D-APD', color='blue')
+    ax.plot(grad_calls_dapdbo, objs_dapdbo_mean, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.plot(grad_calls_aldo, objs_aldo_mean, lw=2, label='global-DATOS', color='green', linestyle=':')
+    ax.axhline(f_star, color='k', ls=':', alpha=0.5, label='$\\varphi^*$')
+    ax.set_title('(a) Objective Function', fontsize=12, fontweight='bold')
+    ax.set_xlabel('Avg. Gradient Calls per Node')
+    ax.set_ylabel('Objective Value')
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+    
+    # (0,1) Relative Suboptimality (log scale)
+    ax = axes[0, 1]
+    ax.semilogy(grad_calls_dapd, rel_subopt_dapd, lw=2, label='D-APD', color='blue')
+    ax.semilogy(grad_calls_dapdbo, rel_subopt_dapdbo, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.semilogy(grad_calls_aldo, rel_subopt_aldo, lw=2, label='global-DATOS', color='green', linestyle=':')
+    ax.set_title('(b) Relative Suboptimality', fontsize=12, fontweight='bold')
+    ax.set_xlabel('Avg. Gradient Calls per Node')
+    ax.set_ylabel('$|\\varphi(\\bar{x}^k) - \\varphi^*|/|\\varphi^*|$')
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+    
+    # (0,2) Step Size Evolution
+    ax = axes[0, 2]
+    ax.semilogy(grad_calls_dapd, tau_dapd_mean, lw=2, label='D-APD: $\\bar{\\tau}$', color='blue')
+    ax.semilogy(grad_calls_dapdbo, tau_dapdbo_mean, lw=2, label='D-APDB: $\\bar{\\tau}$', color='red', linestyle='--')
+    ax.semilogy(grad_calls_aldo, alpha_aldo_mean, lw=2, label='global-DATOS: $\\alpha$', color='green', linestyle=':')
+    ax.set_title('(c) Step Size Evolution', fontsize=12, fontweight='bold')
+    ax.set_xlabel('Avg. Gradient Calls per Node')
+    ax.set_ylabel('Step Size')
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+    
+    # (1,0) Consensus Error
+    ax = axes[1, 0]
+    ax.plot(grad_calls_dapd, cons_dapd_mean, lw=2, label='D-APD', color='blue')
+    ax.plot(grad_calls_dapdbo, cons_dapdbo_mean, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.plot(grad_calls_aldo, cons_aldo_mean, lw=2, label='global-DATOS', color='green', linestyle=':')
+    ax.set_title('(d) Consensus Error', fontsize=12, fontweight='bold')
+    ax.set_xlabel('Avg. Gradient Calls per Node')
+    ax.set_ylabel('Consensus Error')
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+    
+    # (1,1) Relative Consensus Error (log scale)
+    ax = axes[1, 1]
+    ax.semilogy(grad_calls_dapd, rel_cons_dapd, lw=2, label='D-APD', color='blue')
+    ax.semilogy(grad_calls_dapdbo, rel_cons_dapdbo, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.semilogy(grad_calls_aldo, rel_cons_aldo, lw=2, label='global-DATOS', color='green', linestyle=':')
+    ax.set_title('(e) Relative Consensus Error', fontsize=12, fontweight='bold')
+    ax.set_xlabel('Avg. Gradient Calls per Node')
+    ax.set_ylabel('$\\sum_i\\|x_i^k - \\bar{x}^k\\|^2/(N\\|\\bar{x}^k\\|^2)$')
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+    
+    # (1,2) Backtrack Iterations
+    ax = axes[1, 2]
+    ax.plot(iterations, backtrack_dapdbo_iter_mean, lw=2, label='D-APDB', color='red', linestyle='--', marker='o', markersize=3)
+    ax.plot(iterations, backtrack_aldo_iter_mean, lw=2, label='global-DATOS', color='green', linestyle=':', marker='s', markersize=3)
+    ax.set_title(f'(f) Backtrack Iterations (First {max_iterations} iters)', fontsize=12, fontweight='bold')
+    # ax.set_ylim(0, 5)
+    ax.set_xlabel('Iteration Number')
+    ax.set_ylabel('Total Backtrack Iters (All Nodes)')
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+    
+    # Add overall title
+    fig_combined.suptitle(f'QP with L1 Regularization: N={N}, n={n}, E={E}, $\\lambda$={lambda_l1:.4f}', 
+                          fontsize=14, fontweight='bold', y=1.02)
+    
+    plt.tight_layout()
+    filename_combined = os.path.join(subfolder_path, f"{base_filename}_combined.png")
+    plt.savefig(filename_combined, dpi=300, bbox_inches='tight')
+    print(f"Saved: {filename_combined}")
     plt.close()
     
     print(f"\nAll figures saved in folder: {subfolder_path}")

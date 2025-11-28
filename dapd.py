@@ -397,10 +397,6 @@ def d_apd_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
             # Step 4: Update q_i^{k+1}
             # q_i^{k+1} = J g_i(x_i^{k+1})^T θ_i^{k+1} + Σ_{j∈N_i}(s_i^{k+1} - s_j^{k+1})
             q_prev[i] = q[i].copy()
-            q[i] = jacT_theta_i(i, x_next, theta_next)
-            Ni = get_neighbors(i, neighbors_list)
-            for j in Ni:
-                q[i] += s[i] - s[j]
             
             # Update states and previous values
             x_prev[i] = x[i].copy()
@@ -408,6 +404,12 @@ def d_apd_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
             s_prev[i] = s[i].copy()
             x[i] = x_next
             theta[i] = theta_next
+        # Phase 2: Update q for each node (after all s have been updated)
+        for i in range(N):
+            q[i] = jacT_theta_i(i, x[i], theta[i])  # Use updated x[i], theta[i]
+            Ni = get_neighbors(i, neighbors_list)
+            for j in Ni:
+                q[i] += s[i] - s[j]
         
         # Metrics (compute every iteration for convergence check)
         x_bar = sum(x) / N

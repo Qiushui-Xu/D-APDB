@@ -615,11 +615,6 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
                 theta[i] = theta_tilde_kp1[i]
             
             # q_i^{k+1} = J g_i(x_i^{k+1})^T θ_i^{k+1} + Σ_{j∈N_i}(s_i^{k+1} - s_j^{k+1})
-            q_prev[i] = q[i].copy()
-            q[i] = jacT_theta_i(i, x[i], theta[i])
-            Ni = get_neighbors(i, neighbors_list)
-            for j in Ni:
-                q[i] += s[i] - s[j]
             
             # α_i^{k+1} = c_α/τ_i^k, β_i^{k+1} = c_β/τ_i^k, ς_i^{k+1} = c_ς/τ_i^k
             alpha_list[i] = c_alpha / tau_list[i]
@@ -632,6 +627,13 @@ def d_apdb_qcqp_merely_convex(A0, b0, c0, pernode_constraints,
             theta_prev[i] = theta_prev_i_old
             s_prev[i] = s[i].copy()
             tau_prev[i] = tau_list[i]
+            
+        for i in range(N):
+            q_prev[i] = q[i].copy()
+            q[i] = jacT_theta_i(i, x[i], theta[i])
+            Ni = get_neighbors(i, neighbors_list)
+            for j in Ni:
+                q[i] += s[i] - s[j]
         
         # Metrics
         x_bar = sum(x) / N
