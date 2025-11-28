@@ -264,7 +264,7 @@ def d_apdb_unconstrained(
         
         for i in range(N):
             # τ̃_i^k = τ_i^{k-1}
-            tau_tilde_i = tau_prev[i]
+            tau_tilde_i = tau_prev[i] / rho_shrink
             
             # Track backtracking iterations for node i
             backtrack_iterations_i = 0

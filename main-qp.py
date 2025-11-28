@@ -280,9 +280,9 @@ if __name__ == "__main__":
     print("Aggregating Results Across Simulations")
     print("="*80)
     
-    def aggregate_histories(all_histories, metric_idx):
+    def aggregate_histories_by_communications(all_histories, metric_idx, comms_per_iter=1):
         """
-        Aggregate a specific metric across all simulations by aligning gradient calls.
+        Aggregate a specific metric across all simulations by aligning communication rounds.
         
         Parameters:
         -----------
@@ -290,47 +290,52 @@ if __name__ == "__main__":
             Each element is a history list from one simulation
         metric_idx : int
             Index of the metric in history tuple (0=obj, 1=maxV, 2=cons, 3=avgV, 4=subopt, 5=grad_calls, 6=backtrack)
+        comms_per_iter : int
+            Number of communications per iteration (1 for D-APD/D-APDB, 2 for ALDO)
             
         Returns:
         --------
-        grad_calls_grid : np.ndarray
-            Common grid of gradient calls (x-axis)
+        comms_grid : np.ndarray
+            Common grid of communication rounds (x-axis)
         mean_values : np.ndarray
             Mean values across simulations
         std_values : np.ndarray
             Standard deviation across simulations
         """
-        # Extract gradient calls and metric values for each simulation
-        all_grad_calls = []
+        # Extract communication rounds and metric values for each simulation
+        all_comms = []
         all_metric_values = []
         
         for hist in all_histories:
-            grad_calls = np.array([h[5] for h in hist])  # Average gradient calls per node
+            # Communication rounds: iteration index * comms_per_iter
+            # hist[0] is initial point (0 communications), hist[1] is after 1st iteration, etc.
+            num_iters = len(hist) - 1  # Exclude initial point
+            comms = np.array([i * comms_per_iter for i in range(len(hist))])  # [0, comms_per_iter, 2*comms_per_iter, ...]
             metric_vals = np.array([h[metric_idx] for h in hist])
-            all_grad_calls.append(grad_calls)
+            all_comms.append(comms)
             all_metric_values.append(metric_vals)
         
-        # Find common gradient calls grid (union of all gradient call sequences)
-        all_grad_calls_flat = np.concatenate(all_grad_calls)
-        min_grad = np.min(all_grad_calls_flat)
-        max_grad = np.max(all_grad_calls_flat)
+        # Find common communication rounds grid (union of all communication sequences)
+        all_comms_flat = np.concatenate(all_comms)
+        min_comm = np.min(all_comms_flat)
+        max_comm = np.max(all_comms_flat)
         
         # Create a fine grid for interpolation
         # Use the maximum length among all simulations to determine grid density
-        max_len = max(len(gc) for gc in all_grad_calls)
+        max_len = max(len(c) for c in all_comms)
         num_points = min(max_len * 2, 2000)  # Reasonable upper limit
-        grad_calls_grid = np.linspace(min_grad, max_grad, num_points)
+        comms_grid = np.linspace(min_comm, max_comm, num_points)
         
         # Interpolate each simulation's metric values onto the common grid
         interpolated_values = []
-        for grad_calls, metric_vals in zip(all_grad_calls, all_metric_values):
+        for comms, metric_vals in zip(all_comms, all_metric_values):
             # Use forward fill for values beyond the last point
-            if len(grad_calls) > 1:
+            if len(comms) > 1:
                 # Interpolate using numpy
-                interp_vals = np.interp(grad_calls_grid, grad_calls, metric_vals)
+                interp_vals = np.interp(comms_grid, comms, metric_vals)
             else:
                 # Single point - use constant value
-                interp_vals = np.full_like(grad_calls_grid, metric_vals[0])
+                interp_vals = np.full_like(comms_grid, metric_vals[0])
             interpolated_values.append(interp_vals)
         
         # Compute mean and std across simulations
@@ -338,34 +343,38 @@ if __name__ == "__main__":
         mean_values = np.nanmean(interpolated_array, axis=0)
         std_values = np.nanstd(interpolated_array, axis=0)
         
-        return grad_calls_grid, mean_values, std_values
+        return comms_grid, mean_values, std_values
     
-    # Aggregate all metrics for all three algorithms
+    # Aggregate all metrics for all three algorithms by communication rounds
+    # D-APD: 1 communication per iteration
+    # D-APDB: 1 communication per iteration
+    # ALDO: 2 communications per iteration
+    
     # D-APD history format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, x_bar_norm_sq, cons_err_sq_sum, avg_tau)
-    grad_calls_dapd, objs_dapd_mean, objs_dapd_std = aggregate_histories(all_hist_dapd, 0)
-    _, cons_dapd_mean, cons_dapd_std = aggregate_histories(all_hist_dapd, 2)
-    _, subopt_dapd_mean, subopt_dapd_std = aggregate_histories(all_hist_dapd, 4)
-    _, x_bar_norm_sq_dapd_mean, x_bar_norm_sq_dapd_std = aggregate_histories(all_hist_dapd, 6)  # Index 6 for x_bar_norm_sq
-    _, cons_err_sq_sum_dapd_mean, cons_err_sq_sum_dapd_std = aggregate_histories(all_hist_dapd, 7)  # Index 7 for cons_err_sq_sum
-    _, tau_dapd_mean, tau_dapd_std = aggregate_histories(all_hist_dapd, 8)  # Index 8 for avg_tau
+    comms_dapd, objs_dapd_mean, objs_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 0, comms_per_iter=1)
+    _, cons_dapd_mean, cons_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 2, comms_per_iter=1)
+    _, subopt_dapd_mean, subopt_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 4, comms_per_iter=1)
+    _, x_bar_norm_sq_dapd_mean, x_bar_norm_sq_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 6, comms_per_iter=1)  # Index 6 for x_bar_norm_sq
+    _, cons_err_sq_sum_dapd_mean, cons_err_sq_sum_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 7, comms_per_iter=1)  # Index 7 for cons_err_sq_sum
+    _, tau_dapd_mean, tau_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 8, comms_per_iter=1)  # Index 8 for avg_tau
     
     # D-APDB history format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iters, x_bar_norm_sq, cons_err_sq_sum, avg_tau)
-    grad_calls_dapdbo, objs_dapdbo_mean, objs_dapdbo_std = aggregate_histories(all_hist_dapdbo, 0)
-    _, cons_dapdbo_mean, cons_dapdbo_std = aggregate_histories(all_hist_dapdbo, 2)
-    _, subopt_dapdbo_mean, subopt_dapdbo_std = aggregate_histories(all_hist_dapdbo, 4)
-    _, backtrack_dapdbo_mean, backtrack_dapdbo_std = aggregate_histories(all_hist_dapdbo, 6)  # Index 6 for backtrack iterations
-    _, x_bar_norm_sq_dapdbo_mean, x_bar_norm_sq_dapdbo_std = aggregate_histories(all_hist_dapdbo, 7)  # Index 7 for x_bar_norm_sq
-    _, cons_err_sq_sum_dapdbo_mean, cons_err_sq_sum_dapdbo_std = aggregate_histories(all_hist_dapdbo, 8)  # Index 8 for cons_err_sq_sum
-    _, tau_dapdbo_mean, tau_dapdbo_std = aggregate_histories(all_hist_dapdbo, 9)  # Index 9 for avg_tau
+    comms_dapdbo, objs_dapdbo_mean, objs_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 0, comms_per_iter=1)
+    _, cons_dapdbo_mean, cons_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 2, comms_per_iter=1)
+    _, subopt_dapdbo_mean, subopt_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 4, comms_per_iter=1)
+    _, backtrack_dapdbo_mean, backtrack_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 6, comms_per_iter=1)  # Index 6 for backtrack iterations
+    _, x_bar_norm_sq_dapdbo_mean, x_bar_norm_sq_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 7, comms_per_iter=1)  # Index 7 for x_bar_norm_sq
+    _, cons_err_sq_sum_dapdbo_mean, cons_err_sq_sum_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 8, comms_per_iter=1)  # Index 8 for cons_err_sq_sum
+    _, tau_dapdbo_mean, tau_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 9, comms_per_iter=1)  # Index 9 for avg_tau
     
     # ALDO/global-DATOS history format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iters, x_bar_norm_sq, cons_err_sq_sum, alpha)
-    grad_calls_aldo, objs_aldo_mean, objs_aldo_std = aggregate_histories(all_hist_aldo, 0)
-    _, cons_aldo_mean, cons_aldo_std = aggregate_histories(all_hist_aldo, 2)
-    _, subopt_aldo_mean, subopt_aldo_std = aggregate_histories(all_hist_aldo, 4)
-    _, backtrack_aldo_mean, backtrack_aldo_std = aggregate_histories(all_hist_aldo, 6)  # Index 6 for backtrack iterations
-    _, x_bar_norm_sq_aldo_mean, x_bar_norm_sq_aldo_std = aggregate_histories(all_hist_aldo, 7)  # Index 7 for x_bar_norm_sq
-    _, cons_err_sq_sum_aldo_mean, cons_err_sq_sum_aldo_std = aggregate_histories(all_hist_aldo, 8)  # Index 8 for cons_err_sq_sum
-    _, alpha_aldo_mean, alpha_aldo_std = aggregate_histories(all_hist_aldo, 9)  # Index 9 for alpha
+    comms_aldo, objs_aldo_mean, objs_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 0, comms_per_iter=2)
+    _, cons_aldo_mean, cons_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 2, comms_per_iter=2)
+    _, subopt_aldo_mean, subopt_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 4, comms_per_iter=2)
+    _, backtrack_aldo_mean, backtrack_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 6, comms_per_iter=2)  # Index 6 for backtrack iterations
+    _, x_bar_norm_sq_aldo_mean, x_bar_norm_sq_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 7, comms_per_iter=2)  # Index 7 for x_bar_norm_sq
+    _, cons_err_sq_sum_aldo_mean, cons_err_sq_sum_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 8, comms_per_iter=2)  # Index 8 for cons_err_sq_sum
+    _, alpha_aldo_mean, alpha_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 9, comms_per_iter=2)  # Index 9 for alpha
     
     # Compute relative errors
     # Relative suboptimality: |f(x_bar) - f*| / |f*|
@@ -422,20 +431,20 @@ if __name__ == "__main__":
     # 1. Objective Function
     fig1, ax1 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
-    ax1.plot(grad_calls_dapd, objs_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
-    ax1.fill_between(grad_calls_dapd, objs_dapd_mean - objs_dapd_std, objs_dapd_mean + objs_dapd_std, 
+    ax1.plot(comms_dapd, objs_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
+    ax1.fill_between(comms_dapd, objs_dapd_mean - objs_dapd_std, objs_dapd_mean + objs_dapd_std, 
                       alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
     # D-APDB with shaded region
-    ax1.plot(grad_calls_dapdbo, objs_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-    ax1.fill_between(grad_calls_dapdbo, objs_dapdbo_mean - objs_dapdbo_std, objs_dapdbo_mean + objs_dapdbo_std, 
+    ax1.plot(comms_dapdbo, objs_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax1.fill_between(comms_dapdbo, objs_dapdbo_mean - objs_dapdbo_std, objs_dapdbo_mean + objs_dapdbo_std, 
                       alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
     # ALDO with shaded region
-    ax1.plot(grad_calls_aldo, objs_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
-    ax1.fill_between(grad_calls_aldo, objs_aldo_mean - objs_aldo_std, objs_aldo_mean + objs_aldo_std, 
+    ax1.plot(comms_aldo, objs_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+    ax1.fill_between(comms_aldo, objs_aldo_mean - objs_aldo_std, objs_aldo_mean + objs_aldo_std, 
                       alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
     ax1.axhline(f_star, color='k', ls=':', alpha=0.5, label='$\\varphi^*$')
     ax1.set_title(f'Objective Function with L1 Regularization (N={N}, n={n}, λ={lambda_l1}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax1.set_xlabel('Average Number of Gradient Calls per Node')
+    ax1.set_xlabel('Number of Communications')
     ax1.set_ylabel('Objective Value')
     ax1.legend()
     ax1.grid(True, alpha=0.3)
@@ -448,19 +457,19 @@ if __name__ == "__main__":
     # 2. Consensus Error
     fig2, ax2 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
-    ax2.plot(grad_calls_dapd, cons_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
-    ax2.fill_between(grad_calls_dapd, cons_dapd_mean - cons_dapd_std, cons_dapd_mean + cons_dapd_std, 
+    ax2.plot(comms_dapd, cons_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
+    ax2.fill_between(comms_dapd, cons_dapd_mean - cons_dapd_std, cons_dapd_mean + cons_dapd_std, 
                       alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
     # D-APDB with shaded region
-    ax2.plot(grad_calls_dapdbo, cons_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-    ax2.fill_between(grad_calls_dapdbo, cons_dapdbo_mean - cons_dapdbo_std, cons_dapdbo_mean + cons_dapdbo_std, 
+    ax2.plot(comms_dapdbo, cons_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax2.fill_between(comms_dapdbo, cons_dapdbo_mean - cons_dapdbo_std, cons_dapdbo_mean + cons_dapdbo_std, 
                       alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
     # ALDO with shaded region
-    ax2.plot(grad_calls_aldo, cons_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
-    ax2.fill_between(grad_calls_aldo, cons_aldo_mean - cons_aldo_std, cons_aldo_mean + cons_aldo_std, 
+    ax2.plot(comms_aldo, cons_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+    ax2.fill_between(comms_aldo, cons_aldo_mean - cons_aldo_std, cons_aldo_mean + cons_aldo_std, 
                       alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
     ax2.set_title(f'Consensus Error (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax2.set_xlabel('Average Number of Gradient Calls per Node')
+    ax2.set_xlabel('Number of Communications')
     ax2.set_ylabel('Consensus Error')
     ax2.legend()
     ax2.grid(True, alpha=0.3)
@@ -474,19 +483,19 @@ if __name__ == "__main__":
     if not all(np.isnan(subopt_dapd_mean)) and not all(np.isnan(subopt_dapdbo_mean)) and not all(np.isnan(subopt_aldo_mean)):
         fig3, ax3 = plt.subplots(figsize=(10, 6))
         # D-APD with shaded region
-        ax3.plot(grad_calls_dapd, subopt_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
-        ax3.fill_between(grad_calls_dapd, subopt_dapd_mean - subopt_dapd_std, subopt_dapd_mean + subopt_dapd_std, 
+        ax3.plot(comms_dapd, subopt_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
+        ax3.fill_between(comms_dapd, subopt_dapd_mean - subopt_dapd_std, subopt_dapd_mean + subopt_dapd_std, 
                           alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
         # D-APDB with shaded region
-        ax3.plot(grad_calls_dapdbo, subopt_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-        ax3.fill_between(grad_calls_dapdbo, subopt_dapdbo_mean - subopt_dapdbo_std, subopt_dapdbo_mean + subopt_dapdbo_std, 
+        ax3.plot(comms_dapdbo, subopt_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax3.fill_between(comms_dapdbo, subopt_dapdbo_mean - subopt_dapdbo_std, subopt_dapdbo_mean + subopt_dapdbo_std, 
                           alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
         # ALDO with shaded region
-        ax3.plot(grad_calls_aldo, subopt_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
-        ax3.fill_between(grad_calls_aldo, subopt_aldo_mean - subopt_aldo_std, subopt_aldo_mean + subopt_aldo_std, 
+        ax3.plot(comms_aldo, subopt_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+        ax3.fill_between(comms_aldo, subopt_aldo_mean - subopt_aldo_std, subopt_aldo_mean + subopt_aldo_std, 
                           alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
         ax3.set_title(f'Absolute Suboptimality (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-        ax3.set_xlabel('Average Number of Gradient Calls per Node')
+        ax3.set_xlabel('Number of Communications')
         ax3.set_ylabel('Suboptimality')
         ax3.legend()
         ax3.grid(True, alpha=0.3)
@@ -499,23 +508,23 @@ if __name__ == "__main__":
     # 4. Relative Suboptimality: |f(x_bar) - f*| / |f*|
     if not all(np.isnan(rel_subopt_dapd)) and not all(np.isnan(rel_subopt_dapdbo)) and not all(np.isnan(rel_subopt_aldo)):
         fig4, ax4 = plt.subplots(figsize=(10, 6))
-        ax4.semilogy(grad_calls_dapd, rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
-        ax4.fill_between(grad_calls_dapd,
+        ax4.semilogy(comms_dapd, rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
+        ax4.fill_between(comms_dapd,
                          np.maximum(rel_subopt_dapd - rel_subopt_dapd_std, 1e-12),
                          rel_subopt_dapd + rel_subopt_dapd_std,
                          alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
-        ax4.semilogy(grad_calls_dapdbo, rel_subopt_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-        ax4.fill_between(grad_calls_dapdbo,
+        ax4.semilogy(comms_dapdbo, rel_subopt_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax4.fill_between(comms_dapdbo,
                          np.maximum(rel_subopt_dapdbo - rel_subopt_dapdbo_std, 1e-12),
                          rel_subopt_dapdbo + rel_subopt_dapdbo_std,
                          alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
-        ax4.semilogy(grad_calls_aldo, rel_subopt_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
-        ax4.fill_between(grad_calls_aldo,
+        ax4.semilogy(comms_aldo, rel_subopt_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+        ax4.fill_between(comms_aldo,
                          np.maximum(rel_subopt_aldo - rel_subopt_aldo_std, 1e-12),
                          rel_subopt_aldo + rel_subopt_aldo_std,
                          alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
         ax4.set_title(f'Relative Suboptimality: $|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-        ax4.set_xlabel('Average Number of Gradient Calls per Node')
+        ax4.set_xlabel('Number of Communications')
         ax4.set_ylabel('Relative Suboptimality')
         ax4.legend()
         ax4.grid(True, alpha=0.3)
@@ -534,23 +543,23 @@ if __name__ == "__main__":
         log_rel_subopt_dapdbo_std = rel_subopt_dapdbo_std / (rel_subopt_dapdbo + 1.0)
         log_rel_subopt_aldo_std = rel_subopt_aldo_std / (rel_subopt_aldo + 1.0)
         fig4b, ax4b = plt.subplots(figsize=(10, 6))
-        ax4b.plot(grad_calls_dapd, log_rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
-        ax4b.fill_between(grad_calls_dapd,
+        ax4b.plot(comms_dapd, log_rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
+        ax4b.fill_between(comms_dapd,
                           log_rel_subopt_dapd - log_rel_subopt_dapd_std,
                           log_rel_subopt_dapd + log_rel_subopt_dapd_std,
                           alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
-        ax4b.plot(grad_calls_dapdbo, log_rel_subopt_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-        ax4b.fill_between(grad_calls_dapdbo,
+        ax4b.plot(comms_dapdbo, log_rel_subopt_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax4b.fill_between(comms_dapdbo,
                           log_rel_subopt_dapdbo - log_rel_subopt_dapdbo_std,
                           log_rel_subopt_dapdbo + log_rel_subopt_dapdbo_std,
                           alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
-        ax4b.plot(grad_calls_aldo, log_rel_subopt_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
-        ax4b.fill_between(grad_calls_aldo,
+        ax4b.plot(comms_aldo, log_rel_subopt_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+        ax4b.fill_between(comms_aldo,
                           log_rel_subopt_aldo - log_rel_subopt_aldo_std,
                           log_rel_subopt_aldo + log_rel_subopt_aldo_std,
                           alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
         ax4b.set_title(f'Log Relative Suboptimality: $\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-        ax4b.set_xlabel('Average Number of Gradient Calls per Node')
+        ax4b.set_xlabel('Number of Communications')
         ax4b.set_ylabel('$\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$')
         ax4b.legend()
         ax4b.grid(True, alpha=0.3)
@@ -562,23 +571,23 @@ if __name__ == "__main__":
 
     # 5. Relative Consensus Error: ||x_i^k - x_bar^k||^2 / (N * ||x_bar^k||^2)
     fig5, ax5 = plt.subplots(figsize=(10, 6))
-    ax5.semilogy(grad_calls_dapd, rel_cons_dapd, lw=2, label='D-APD (mean)', color='blue')
-    ax5.fill_between(grad_calls_dapd,
+    ax5.semilogy(comms_dapd, rel_cons_dapd, lw=2, label='D-APD (mean)', color='blue')
+    ax5.fill_between(comms_dapd,
                      np.maximum(rel_cons_dapd - rel_cons_dapd_std, 1e-12),
                      rel_cons_dapd + rel_cons_dapd_std,
                      alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
-    ax5.semilogy(grad_calls_dapdbo, rel_cons_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-    ax5.fill_between(grad_calls_dapdbo,
+    ax5.semilogy(comms_dapdbo, rel_cons_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax5.fill_between(comms_dapdbo,
                      np.maximum(rel_cons_dapdbo - rel_cons_dapdbo_std, 1e-12),
                      rel_cons_dapdbo + rel_cons_dapdbo_std,
                      alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
-    ax5.semilogy(grad_calls_aldo, rel_cons_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
-    ax5.fill_between(grad_calls_aldo,
+    ax5.semilogy(comms_aldo, rel_cons_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+    ax5.fill_between(comms_aldo,
                      np.maximum(rel_cons_aldo - rel_cons_aldo_std, 1e-12),
                      rel_cons_aldo + rel_cons_aldo_std,
                      alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
     ax5.set_title(f'Relative Consensus Error: $\\|x_i^k - \\bar{{x}}^k\\|^2/(N\\|\\bar{{x}}^k\\|^2)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax5.set_xlabel('Average Number of Gradient Calls per Node')
+    ax5.set_xlabel('Number of Communications')
     ax5.set_ylabel('Relative Consensus Error')
     ax5.legend()
     ax5.grid(True, alpha=0.3)
@@ -709,25 +718,25 @@ if __name__ == "__main__":
     # 7. Step Size (tau/alpha) Evolution
     fig7, ax7 = plt.subplots(figsize=(10, 6))
     # D-APD: tau (constant, no backtracking)
-    ax7.semilogy(grad_calls_dapd, tau_dapd_mean, lw=2, label='D-APD: $\\bar{\\tau}$ (mean)', color='blue')
-    ax7.fill_between(grad_calls_dapd,
+    ax7.semilogy(comms_dapd, tau_dapd_mean, lw=2, label='D-APD: $\\bar{\\tau}$ (mean)', color='blue')
+    ax7.fill_between(comms_dapd,
                      np.maximum(tau_dapd_mean - tau_dapd_std, 1e-12),
                      tau_dapd_mean + tau_dapd_std,
                      alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
     # D-APDB: tau (adaptive with backtracking)
-    ax7.semilogy(grad_calls_dapdbo, tau_dapdbo_mean, lw=2, label='D-APDB: $\\bar{\\tau}$ (mean)', color='red', linestyle='--')
-    ax7.fill_between(grad_calls_dapdbo,
+    ax7.semilogy(comms_dapdbo, tau_dapdbo_mean, lw=2, label='D-APDB: $\\bar{\\tau}$ (mean)', color='red', linestyle='--')
+    ax7.fill_between(comms_dapdbo,
                      np.maximum(tau_dapdbo_mean - tau_dapdbo_std, 1e-12),
                      tau_dapdbo_mean + tau_dapdbo_std,
                      alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
     # global-DATOS: alpha (adaptive with backtracking)
-    ax7.semilogy(grad_calls_aldo, alpha_aldo_mean, lw=2, label='global-DATOS: $\\alpha$ (mean)', color='green', linestyle=':')
-    ax7.fill_between(grad_calls_aldo,
+    ax7.semilogy(comms_aldo, alpha_aldo_mean, lw=2, label='global-DATOS: $\\alpha$ (mean)', color='green', linestyle=':')
+    ax7.fill_between(comms_aldo,
                      np.maximum(alpha_aldo_mean - alpha_aldo_std, 1e-12),
                      alpha_aldo_mean + alpha_aldo_std,
                      alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
     ax7.set_title(f'Step Size Evolution (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax7.set_xlabel('Average Number of Gradient Calls per Node')
+    ax7.set_xlabel('Number of Communications')
     ax7.set_ylabel('Step Size ($\\tau$ or $\\alpha$)')
     ax7.legend()
     ax7.grid(True, alpha=0.3)
@@ -743,56 +752,56 @@ if __name__ == "__main__":
     
     # (0,0) Objective Function
     ax = axes[0, 0]
-    ax.plot(grad_calls_dapd, objs_dapd_mean, lw=2, label='D-APD', color='blue')
-    ax.plot(grad_calls_dapdbo, objs_dapdbo_mean, lw=2, label='D-APDB', color='red', linestyle='--')
-    ax.plot(grad_calls_aldo, objs_aldo_mean, lw=2, label='global-DATOS', color='green', linestyle=':')
+    ax.plot(comms_dapd, objs_dapd_mean, lw=2, label='D-APD', color='blue')
+    ax.plot(comms_dapdbo, objs_dapdbo_mean, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.plot(comms_aldo, objs_aldo_mean, lw=2, label='global-DATOS', color='green', linestyle=':')
     ax.axhline(f_star, color='k', ls=':', alpha=0.5, label='$\\varphi^*$')
     ax.set_title('(a) Objective Function', fontsize=12, fontweight='bold')
-    ax.set_xlabel('Avg. Gradient Calls per Node')
+    ax.set_xlabel('Number of Communications')
     ax.set_ylabel('Objective Value')
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     
     # (0,1) Relative Suboptimality (log scale)
     ax = axes[0, 1]
-    ax.semilogy(grad_calls_dapd, rel_subopt_dapd, lw=2, label='D-APD', color='blue')
-    ax.semilogy(grad_calls_dapdbo, rel_subopt_dapdbo, lw=2, label='D-APDB', color='red', linestyle='--')
-    ax.semilogy(grad_calls_aldo, rel_subopt_aldo, lw=2, label='global-DATOS', color='green', linestyle=':')
+    ax.semilogy(comms_dapd, rel_subopt_dapd, lw=2, label='D-APD', color='blue')
+    ax.semilogy(comms_dapdbo, rel_subopt_dapdbo, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.semilogy(comms_aldo, rel_subopt_aldo, lw=2, label='global-DATOS', color='green', linestyle=':')
     ax.set_title('(b) Relative Suboptimality', fontsize=12, fontweight='bold')
-    ax.set_xlabel('Avg. Gradient Calls per Node')
+    ax.set_xlabel('Number of Communications')
     ax.set_ylabel('$|\\varphi(\\bar{x}^k) - \\varphi^*|/|\\varphi^*|$')
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     
     # (0,2) Step Size Evolution
     ax = axes[0, 2]
-    ax.semilogy(grad_calls_dapd, tau_dapd_mean, lw=2, label='D-APD: $\\bar{\\tau}$', color='blue')
-    ax.semilogy(grad_calls_dapdbo, tau_dapdbo_mean, lw=2, label='D-APDB: $\\bar{\\tau}$', color='red', linestyle='--')
-    ax.semilogy(grad_calls_aldo, alpha_aldo_mean, lw=2, label='global-DATOS: $\\alpha$', color='green', linestyle=':')
+    ax.semilogy(comms_dapd, tau_dapd_mean, lw=2, label='D-APD: $\\bar{\\tau}$', color='blue')
+    ax.semilogy(comms_dapdbo, tau_dapdbo_mean, lw=2, label='D-APDB: $\\bar{\\tau}$', color='red', linestyle='--')
+    ax.semilogy(comms_aldo, alpha_aldo_mean, lw=2, label='global-DATOS: $\\alpha$', color='green', linestyle=':')
     ax.set_title('(c) Step Size Evolution', fontsize=12, fontweight='bold')
-    ax.set_xlabel('Avg. Gradient Calls per Node')
+    ax.set_xlabel('Number of Communications')
     ax.set_ylabel('Step Size')
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     
     # (1,0) Consensus Error
     ax = axes[1, 0]
-    ax.plot(grad_calls_dapd, cons_dapd_mean, lw=2, label='D-APD', color='blue')
-    ax.plot(grad_calls_dapdbo, cons_dapdbo_mean, lw=2, label='D-APDB', color='red', linestyle='--')
-    ax.plot(grad_calls_aldo, cons_aldo_mean, lw=2, label='global-DATOS', color='green', linestyle=':')
+    ax.plot(comms_dapd, cons_dapd_mean, lw=2, label='D-APD', color='blue')
+    ax.plot(comms_dapdbo, cons_dapdbo_mean, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.plot(comms_aldo, cons_aldo_mean, lw=2, label='global-DATOS', color='green', linestyle=':')
     ax.set_title('(d) Consensus Error', fontsize=12, fontweight='bold')
-    ax.set_xlabel('Avg. Gradient Calls per Node')
+    ax.set_xlabel('Number of Communications')
     ax.set_ylabel('Consensus Error')
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     
     # (1,1) Relative Consensus Error (log scale)
     ax = axes[1, 1]
-    ax.semilogy(grad_calls_dapd, rel_cons_dapd, lw=2, label='D-APD', color='blue')
-    ax.semilogy(grad_calls_dapdbo, rel_cons_dapdbo, lw=2, label='D-APDB', color='red', linestyle='--')
-    ax.semilogy(grad_calls_aldo, rel_cons_aldo, lw=2, label='global-DATOS', color='green', linestyle=':')
+    ax.semilogy(comms_dapd, rel_cons_dapd, lw=2, label='D-APD', color='blue')
+    ax.semilogy(comms_dapdbo, rel_cons_dapdbo, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.semilogy(comms_aldo, rel_cons_aldo, lw=2, label='global-DATOS', color='green', linestyle=':')
     ax.set_title('(e) Relative Consensus Error', fontsize=12, fontweight='bold')
-    ax.set_xlabel('Avg. Gradient Calls per Node')
+    ax.set_xlabel('Number of Communications')
     ax.set_ylabel('$\\sum_i\\|x_i^k - \\bar{x}^k\\|^2/(N\\|\\bar{x}^k\\|^2)$')
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
