@@ -4,6 +4,15 @@ __pycache__/
 *.pyo
 *.pyd
 
+# python files
+grid_search_qp.py
+grid_search_qp_v2.py
+test_run.py
+dapd-svm.py
+
+# folders 
+old_files/
+
 # Virtual environments
 venv/
 env/
