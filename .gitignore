@@ -12,6 +12,10 @@ dapd-svm.py
 
 # folders 
 old_files/
+__pycache__/
+main-qcqp-experiments/
+main-qp-experiments/
+svm-experiments/
 
 # Virtual environments
 venv/
