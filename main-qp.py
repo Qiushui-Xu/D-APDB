@@ -45,7 +45,13 @@ if __name__ == "__main__":
     
     # Algorithm parameters
     gamma = None
-    max_iter = 400
+    # Fixed total number of communications for fair comparison
+    max_communications = 1000  # Total communication rounds
+    # D-APD and D-APDB: 1 communication per iteration
+    max_iter_dapd = max_communications
+    max_iter_dapdbo = max_communications
+    # ALDO: 2 communications per iteration
+    max_iter_aldo = max_communications // 2
     # Key insight: γ^k = (c_γ/τ̄) / (2/c_α + η^k/c_ς)
     # To increase γ^k (faster consensus), we can:
     # 1. Decrease τ̄ (smaller tau_multiplier)
@@ -103,7 +109,7 @@ if __name__ == "__main__":
     
     # Override lambda_l1 if needed (set to 1.0 for stronger L1 regularization)
     # Based on grid search best config: lambda_l1 = 1.0 per node
-    lambda_l1 = 1.0  # Per-node L1 coefficient (centralized = N * 1.0)
+    lambda_l1 = 1 / N # Per-node L1 coefficient (centralized = N * 1.0)
     print(f"  lambda_l1 (per-node) = {lambda_l1:.6f}, centralized L1 coefficient = {N * lambda_l1:.1f}")
     
     # Aggregate objective for ground truth solving: 
@@ -183,8 +189,16 @@ if __name__ == "__main__":
     
     # ==================== Run Multiple Simulations ====================
     num_simulations = 20
+    
+    # Visualization smoothing: clip shaded bands to central percentiles for readability
+    shade_percentile_bounds = (10, 90)  # Set to None to revert to mean ± std shading
+    
     print(f"\n" + "="*80)
     print(f"Running {num_simulations} Simulations (i.i.d. random initializations)")
+    print(f"Maximum communications: {max_communications}")
+    print(f"  D-APD:   max_iter = {max_iter_dapd} (1 comm/iter)")
+    print(f"  D-APDB:  max_iter = {max_iter_dapdbo} (1 comm/iter)")
+    print(f"  ALDO:    max_iter = {max_iter_aldo} (2 comms/iter)")
     print("="*80)
     
     # Storage for all simulation results
@@ -210,7 +224,7 @@ if __name__ == "__main__":
         x_bar_dapd, hist_dapd = dapd.d_apd_qcqp_merely_convex(
             A0_agg, b0_agg, None, [([], [], []) for _ in range(N)], None, None,
             Q_list=Q_list, q_list=q_list,  # Node-specific objectives
-            N=N, max_iter=max_iter, seed=sim_seed,
+            N=N, max_iter=max_iter_dapd, seed=sim_seed,
             c_alpha=c_alpha, c_beta=c_beta, c_varsigma=c_varsigma,
             zeta=zeta, tau=None, gamma=computed_gamma_dapd,
             verbose_every=verbose_every if sim_idx == 0 else 0, initial_scale=initial_scale,
@@ -231,7 +245,7 @@ if __name__ == "__main__":
         # Larger c_gamma → larger γ_k → faster consensus (compensates for tau_bar_max in denominator)
         c_gamma_dapdbo = 1 / (2 * E) # 0.02  # Very aggressive: 50x theoretical bound
         x_bar_dapdbo, hist_dapdbo, stats_dapdbo = dapdbo.d_apdb_unconstrained(
-            N=N, n=n, max_iter=max_iter, seed=sim_seed,
+            N=N, n=n, max_iter=max_iter_dapdbo, seed=sim_seed,
             c_alpha=c_alpha, c_varsigma=c_varsigma, c_gamma=c_gamma_dapdbo,
             rho_shrink=rho_shrink, delta=delta,
             verbose_every=verbose_every if sim_idx == 0 else 0,
@@ -252,7 +266,7 @@ if __name__ == "__main__":
             print("Running ALDO Solver...")
         x_bar_aldo, hist_aldo = aldo.aldo_qcqp_merely_convex(
             A0_agg, b0_agg, 0.0, None, None,
-            N=N, max_iter=max_iter, seed=sim_seed,
+            N=N, max_iter=max_iter_aldo, seed=sim_seed,
             alpha_init=None, alpha_init_constant=alpha_init_constant, delta=delta, c=0.1,  # Slower gossip mixing (was 0.3)
             verbose_every=verbose_every if sim_idx == 0 else 0, initial_scale=initial_scale,
             phi_star=f_star, tol=1e-8, normalize_consensus_error=False,
@@ -280,7 +294,7 @@ if __name__ == "__main__":
     print("Aggregating Results Across Simulations")
     print("="*80)
     
-    def aggregate_histories_by_communications(all_histories, metric_idx, comms_per_iter=1):
+    def aggregate_histories_by_communications(all_histories, metric_idx, comms_per_iter=1, max_comm=None, percentile_clip=None):
         """
         Aggregate a specific metric across all simulations by aligning communication rounds.
         
@@ -292,6 +306,11 @@ if __name__ == "__main__":
             Index of the metric in history tuple (0=obj, 1=maxV, 2=cons, 3=avgV, 4=subopt, 5=grad_calls, 6=backtrack)
         comms_per_iter : int
             Number of communications per iteration (1 for D-APD/D-APDB, 2 for ALDO)
+        max_comm : int or None
+            Maximum communication rounds to include (None means no limit)
+        percentile_clip : tuple(int, int) or None
+            Optional (low, high) percentiles used to clip the shaded band.
+            When None, the shaded region defaults to mean ± 1 std.
             
         Returns:
         --------
@@ -301,6 +320,10 @@ if __name__ == "__main__":
             Mean values across simulations
         std_values : np.ndarray
             Standard deviation across simulations
+        lower_band : np.ndarray
+            Lower edge for shaded visualization (percentile-based or mean - std)
+        upper_band : np.ndarray
+            Upper edge for shaded visualization (percentile-based or mean + std)
         """
         # Extract communication rounds and metric values for each simulation
         all_comms = []
@@ -309,22 +332,32 @@ if __name__ == "__main__":
         for hist in all_histories:
             # Communication rounds: iteration index * comms_per_iter
             # hist[0] is initial point (0 communications), hist[1] is after 1st iteration, etc.
-            num_iters = len(hist) - 1  # Exclude initial point
             comms = np.array([i * comms_per_iter for i in range(len(hist))])  # [0, comms_per_iter, 2*comms_per_iter, ...]
             metric_vals = np.array([h[metric_idx] for h in hist])
+            
+            # Truncate to max_comm if specified
+            if max_comm is not None:
+                mask = comms <= max_comm
+                comms = comms[mask]
+                metric_vals = metric_vals[mask]
+            
             all_comms.append(comms)
             all_metric_values.append(metric_vals)
         
         # Find common communication rounds grid (union of all communication sequences)
         all_comms_flat = np.concatenate(all_comms)
         min_comm = np.min(all_comms_flat)
-        max_comm = np.max(all_comms_flat)
+        max_comm_actual = np.max(all_comms_flat)
+        
+        # If max_comm is specified, use it as the upper bound
+        if max_comm is not None:
+            max_comm_actual = min(max_comm_actual, max_comm)
         
         # Create a fine grid for interpolation
         # Use the maximum length among all simulations to determine grid density
         max_len = max(len(c) for c in all_comms)
         num_points = min(max_len * 2, 2000)  # Reasonable upper limit
-        comms_grid = np.linspace(min_comm, max_comm, num_points)
+        comms_grid = np.linspace(min_comm, max_comm_actual, num_points)
         
         # Interpolate each simulation's metric values onto the common grid
         interpolated_values = []
@@ -343,48 +376,68 @@ if __name__ == "__main__":
         mean_values = np.nanmean(interpolated_array, axis=0)
         std_values = np.nanstd(interpolated_array, axis=0)
         
-        return comms_grid, mean_values, std_values
+        # Compute shaded band edges
+        if percentile_clip is not None:
+            low_p, high_p = percentile_clip
+            low_p = max(0, min(low_p, 100))
+            high_p = max(low_p, min(high_p, 100))
+            lower_band = np.nanpercentile(interpolated_array, low_p, axis=0)
+            upper_band = np.nanpercentile(interpolated_array, high_p, axis=0)
+        else:
+            lower_band = mean_values - std_values
+            upper_band = mean_values + std_values
+        
+        return comms_grid, mean_values, std_values, lower_band, upper_band
     
     # Aggregate all metrics for all three algorithms by communication rounds
     # D-APD: 1 communication per iteration
     # D-APDB: 1 communication per iteration
     # ALDO: 2 communications per iteration
+    # All algorithms are compared at the same total number of communications (max_communications)
+    
+    print(f"\nAggregating results up to {max_communications} communications...")
     
     # D-APD history format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, x_bar_norm_sq, cons_err_sq_sum, avg_tau)
-    comms_dapd, objs_dapd_mean, objs_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 0, comms_per_iter=1)
-    _, cons_dapd_mean, cons_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 2, comms_per_iter=1)
-    _, subopt_dapd_mean, subopt_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 4, comms_per_iter=1)
-    _, x_bar_norm_sq_dapd_mean, x_bar_norm_sq_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 6, comms_per_iter=1)  # Index 6 for x_bar_norm_sq
-    _, cons_err_sq_sum_dapd_mean, cons_err_sq_sum_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 7, comms_per_iter=1)  # Index 7 for cons_err_sq_sum
-    _, tau_dapd_mean, tau_dapd_std = aggregate_histories_by_communications(all_hist_dapd, 8, comms_per_iter=1)  # Index 8 for avg_tau
+    comms_dapd, objs_dapd_mean, objs_dapd_std, objs_dapd_lower, objs_dapd_upper = aggregate_histories_by_communications(all_hist_dapd, 0, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)
+    _, cons_dapd_mean, cons_dapd_std, cons_dapd_lower, cons_dapd_upper = aggregate_histories_by_communications(all_hist_dapd, 2, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)
+    _, subopt_dapd_mean, subopt_dapd_std, subopt_dapd_lower, subopt_dapd_upper = aggregate_histories_by_communications(all_hist_dapd, 4, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)
+    _, x_bar_norm_sq_dapd_mean, x_bar_norm_sq_dapd_std, x_bar_norm_sq_dapd_lower, x_bar_norm_sq_dapd_upper = aggregate_histories_by_communications(all_hist_dapd, 6, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)  # Index 6 for x_bar_norm_sq
+    _, cons_err_sq_sum_dapd_mean, cons_err_sq_sum_dapd_std, cons_err_sq_sum_dapd_lower, cons_err_sq_sum_dapd_upper = aggregate_histories_by_communications(all_hist_dapd, 7, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)  # Index 7 for cons_err_sq_sum
+    _, tau_dapd_mean, tau_dapd_std, tau_dapd_lower, tau_dapd_upper = aggregate_histories_by_communications(all_hist_dapd, 8, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)  # Index 8 for avg_tau
     
     # D-APDB history format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iters, x_bar_norm_sq, cons_err_sq_sum, avg_tau)
-    comms_dapdbo, objs_dapdbo_mean, objs_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 0, comms_per_iter=1)
-    _, cons_dapdbo_mean, cons_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 2, comms_per_iter=1)
-    _, subopt_dapdbo_mean, subopt_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 4, comms_per_iter=1)
-    _, backtrack_dapdbo_mean, backtrack_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 6, comms_per_iter=1)  # Index 6 for backtrack iterations
-    _, x_bar_norm_sq_dapdbo_mean, x_bar_norm_sq_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 7, comms_per_iter=1)  # Index 7 for x_bar_norm_sq
-    _, cons_err_sq_sum_dapdbo_mean, cons_err_sq_sum_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 8, comms_per_iter=1)  # Index 8 for cons_err_sq_sum
-    _, tau_dapdbo_mean, tau_dapdbo_std = aggregate_histories_by_communications(all_hist_dapdbo, 9, comms_per_iter=1)  # Index 9 for avg_tau
+    comms_dapdbo, objs_dapdbo_mean, objs_dapdbo_std, objs_dapdbo_lower, objs_dapdbo_upper = aggregate_histories_by_communications(all_hist_dapdbo, 0, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)
+    _, cons_dapdbo_mean, cons_dapdbo_std, cons_dapdbo_lower, cons_dapdbo_upper = aggregate_histories_by_communications(all_hist_dapdbo, 2, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)
+    _, subopt_dapdbo_mean, subopt_dapdbo_std, subopt_dapdbo_lower, subopt_dapdbo_upper = aggregate_histories_by_communications(all_hist_dapdbo, 4, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)
+    _, backtrack_dapdbo_mean, backtrack_dapdbo_std, _, _ = aggregate_histories_by_communications(all_hist_dapdbo, 6, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)  # Index 6 for backtrack iterations
+    _, x_bar_norm_sq_dapdbo_mean, x_bar_norm_sq_dapdbo_std, x_bar_norm_sq_dapdbo_lower, x_bar_norm_sq_dapdbo_upper = aggregate_histories_by_communications(all_hist_dapdbo, 7, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)  # Index 7 for x_bar_norm_sq
+    _, cons_err_sq_sum_dapdbo_mean, cons_err_sq_sum_dapdbo_std, cons_err_sq_sum_dapdbo_lower, cons_err_sq_sum_dapdbo_upper = aggregate_histories_by_communications(all_hist_dapdbo, 8, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)  # Index 8 for cons_err_sq_sum
+    _, tau_dapdbo_mean, tau_dapdbo_std, tau_dapdbo_lower, tau_dapdbo_upper = aggregate_histories_by_communications(all_hist_dapdbo, 9, comms_per_iter=1, max_comm=max_communications, percentile_clip=shade_percentile_bounds)  # Index 9 for avg_tau
     
     # ALDO/global-DATOS history format: (obj, max_viol, cons_err, avg_viol, subopt, avg_grad_calls, total_backtrack_iters, x_bar_norm_sq, cons_err_sq_sum, alpha)
-    comms_aldo, objs_aldo_mean, objs_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 0, comms_per_iter=2)
-    _, cons_aldo_mean, cons_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 2, comms_per_iter=2)
-    _, subopt_aldo_mean, subopt_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 4, comms_per_iter=2)
-    _, backtrack_aldo_mean, backtrack_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 6, comms_per_iter=2)  # Index 6 for backtrack iterations
-    _, x_bar_norm_sq_aldo_mean, x_bar_norm_sq_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 7, comms_per_iter=2)  # Index 7 for x_bar_norm_sq
-    _, cons_err_sq_sum_aldo_mean, cons_err_sq_sum_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 8, comms_per_iter=2)  # Index 8 for cons_err_sq_sum
-    _, alpha_aldo_mean, alpha_aldo_std = aggregate_histories_by_communications(all_hist_aldo, 9, comms_per_iter=2)  # Index 9 for alpha
+    comms_aldo, objs_aldo_mean, objs_aldo_std, objs_aldo_lower, objs_aldo_upper = aggregate_histories_by_communications(all_hist_aldo, 0, comms_per_iter=2, max_comm=max_communications, percentile_clip=shade_percentile_bounds)
+    _, cons_aldo_mean, cons_aldo_std, cons_aldo_lower, cons_aldo_upper = aggregate_histories_by_communications(all_hist_aldo, 2, comms_per_iter=2, max_comm=max_communications, percentile_clip=shade_percentile_bounds)
+    _, subopt_aldo_mean, subopt_aldo_std, subopt_aldo_lower, subopt_aldo_upper = aggregate_histories_by_communications(all_hist_aldo, 4, comms_per_iter=2, max_comm=max_communications, percentile_clip=shade_percentile_bounds)
+    _, backtrack_aldo_mean, backtrack_aldo_std, _, _ = aggregate_histories_by_communications(all_hist_aldo, 6, comms_per_iter=2, max_comm=max_communications, percentile_clip=shade_percentile_bounds)  # Index 6 for backtrack iterations
+    _, x_bar_norm_sq_aldo_mean, x_bar_norm_sq_aldo_std, x_bar_norm_sq_aldo_lower, x_bar_norm_sq_aldo_upper = aggregate_histories_by_communications(all_hist_aldo, 7, comms_per_iter=2, max_comm=max_communications, percentile_clip=shade_percentile_bounds)  # Index 7 for x_bar_norm_sq
+    _, cons_err_sq_sum_aldo_mean, cons_err_sq_sum_aldo_std, cons_err_sq_sum_aldo_lower, cons_err_sq_sum_aldo_upper = aggregate_histories_by_communications(all_hist_aldo, 8, comms_per_iter=2, max_comm=max_communications, percentile_clip=shade_percentile_bounds)  # Index 8 for cons_err_sq_sum
+    _, alpha_aldo_mean, alpha_aldo_std, alpha_aldo_lower, alpha_aldo_upper = aggregate_histories_by_communications(all_hist_aldo, 9, comms_per_iter=2, max_comm=max_communications, percentile_clip=shade_percentile_bounds)  # Index 9 for alpha
     
     # Compute relative errors
     # Relative suboptimality: |f(x_bar) - f*| / |f*|
     f_star_abs = abs(f_star)
     rel_subopt_dapd = subopt_dapd_mean / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapd_mean, np.nan)
     rel_subopt_dapd_std = subopt_dapd_std / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapd_std, np.nan)
+    rel_subopt_dapd_lower = subopt_dapd_lower / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapd_lower, np.nan)
+    rel_subopt_dapd_upper = subopt_dapd_upper / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapd_upper, np.nan)
     rel_subopt_dapdbo = subopt_dapdbo_mean / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapdbo_mean, np.nan)
     rel_subopt_dapdbo_std = subopt_dapdbo_std / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapdbo_std, np.nan)
+    rel_subopt_dapdbo_lower = subopt_dapdbo_lower / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapdbo_lower, np.nan)
+    rel_subopt_dapdbo_upper = subopt_dapdbo_upper / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_dapdbo_upper, np.nan)
     rel_subopt_aldo = subopt_aldo_mean / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_aldo_mean, np.nan)
     rel_subopt_aldo_std = subopt_aldo_std / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_aldo_std, np.nan)
+    rel_subopt_aldo_lower = subopt_aldo_lower / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_aldo_lower, np.nan)
+    rel_subopt_aldo_upper = subopt_aldo_upper / f_star_abs if f_star_abs > 1e-10 else np.full_like(subopt_aldo_upper, np.nan)
     
     # Relative consensus error: ||x_i^k - x_bar^k||^2 / (N * ||x_bar^k||^2)
     rel_cons_dapd = cons_err_sq_sum_dapd_mean / (N * np.maximum(x_bar_norm_sq_dapd_mean, 1e-12))
@@ -402,6 +455,13 @@ if __name__ == "__main__":
         np.maximum((cons_err_sq_sum_aldo_std / np.maximum(cons_err_sq_sum_aldo_mean, 1e-12))**2 +
                    (x_bar_norm_sq_aldo_std / np.maximum(x_bar_norm_sq_aldo_mean, 1e-12))**2, 0)
     )
+    # Compute percentile bounds for relative consensus error
+    rel_cons_dapd_lower = cons_err_sq_sum_dapd_lower / (N * np.maximum(x_bar_norm_sq_dapd_upper, 1e-12))
+    rel_cons_dapd_upper = cons_err_sq_sum_dapd_upper / (N * np.maximum(x_bar_norm_sq_dapd_lower, 1e-12))
+    rel_cons_dapdbo_lower = cons_err_sq_sum_dapdbo_lower / (N * np.maximum(x_bar_norm_sq_dapdbo_upper, 1e-12))
+    rel_cons_dapdbo_upper = cons_err_sq_sum_dapdbo_upper / (N * np.maximum(x_bar_norm_sq_dapdbo_lower, 1e-12))
+    rel_cons_aldo_lower = cons_err_sq_sum_aldo_lower / (N * np.maximum(x_bar_norm_sq_aldo_upper, 1e-12))
+    rel_cons_aldo_upper = cons_err_sq_sum_aldo_upper / (N * np.maximum(x_bar_norm_sq_aldo_lower, 1e-12))
     
     # Final comparison (averaged over simulations)
     print(f"\nFinal Results (averaged over {num_simulations} simulations):")
@@ -428,24 +488,31 @@ if __name__ == "__main__":
     
     base_filename = f"qp_comparison_{subfolder_name}"
     
+    # Legend label helper for shaded regions
+    if shade_percentile_bounds:
+        shade_label_text = f"{shade_percentile_bounds[0]}-{shade_percentile_bounds[1]} percentile band"
+    else:
+        shade_label_text = "±1 std"
+    
     # 1. Objective Function
     fig1, ax1 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
     ax1.plot(comms_dapd, objs_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
-    ax1.fill_between(comms_dapd, objs_dapd_mean - objs_dapd_std, objs_dapd_mean + objs_dapd_std, 
-                      alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+    ax1.fill_between(comms_dapd, objs_dapd_lower, objs_dapd_upper, 
+                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
     # D-APDB with shaded region
     ax1.plot(comms_dapdbo, objs_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-    ax1.fill_between(comms_dapdbo, objs_dapdbo_mean - objs_dapdbo_std, objs_dapdbo_mean + objs_dapdbo_std, 
-                      alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+    ax1.fill_between(comms_dapdbo, objs_dapdbo_lower, objs_dapdbo_upper, 
+                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
     # ALDO with shaded region
     ax1.plot(comms_aldo, objs_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
-    ax1.fill_between(comms_aldo, objs_aldo_mean - objs_aldo_std, objs_aldo_mean + objs_aldo_std, 
-                      alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+    ax1.fill_between(comms_aldo, objs_aldo_lower, objs_aldo_upper, 
+                      alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
     ax1.axhline(f_star, color='k', ls=':', alpha=0.5, label='$\\varphi^*$')
     ax1.set_title(f'Objective Function with L1 Regularization (N={N}, n={n}, λ={lambda_l1}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax1.set_xlabel('Number of Communications')
     ax1.set_ylabel('Objective Value')
+    ax1.set_xlim(0, max_communications)
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -458,19 +525,20 @@ if __name__ == "__main__":
     fig2, ax2 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
     ax2.plot(comms_dapd, cons_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
-    ax2.fill_between(comms_dapd, cons_dapd_mean - cons_dapd_std, cons_dapd_mean + cons_dapd_std, 
-                      alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+    ax2.fill_between(comms_dapd, cons_dapd_lower, cons_dapd_upper, 
+                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
     # D-APDB with shaded region
     ax2.plot(comms_dapdbo, cons_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-    ax2.fill_between(comms_dapdbo, cons_dapdbo_mean - cons_dapdbo_std, cons_dapdbo_mean + cons_dapdbo_std, 
-                      alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+    ax2.fill_between(comms_dapdbo, cons_dapdbo_lower, cons_dapdbo_upper, 
+                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
     # ALDO with shaded region
     ax2.plot(comms_aldo, cons_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
-    ax2.fill_between(comms_aldo, cons_aldo_mean - cons_aldo_std, cons_aldo_mean + cons_aldo_std, 
-                      alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+    ax2.fill_between(comms_aldo, cons_aldo_lower, cons_aldo_upper, 
+                      alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
     ax2.set_title(f'Consensus Error (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax2.set_xlabel('Number of Communications')
     ax2.set_ylabel('Consensus Error')
+    ax2.set_xlim(0, max_communications)
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -484,19 +552,20 @@ if __name__ == "__main__":
         fig3, ax3 = plt.subplots(figsize=(10, 6))
         # D-APD with shaded region
         ax3.plot(comms_dapd, subopt_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
-        ax3.fill_between(comms_dapd, subopt_dapd_mean - subopt_dapd_std, subopt_dapd_mean + subopt_dapd_std, 
-                          alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+        ax3.fill_between(comms_dapd, subopt_dapd_lower, subopt_dapd_upper, 
+                          alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
         # D-APDB with shaded region
         ax3.plot(comms_dapdbo, subopt_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
-        ax3.fill_between(comms_dapdbo, subopt_dapdbo_mean - subopt_dapdbo_std, subopt_dapdbo_mean + subopt_dapdbo_std, 
-                          alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+        ax3.fill_between(comms_dapdbo, subopt_dapdbo_lower, subopt_dapdbo_upper, 
+                          alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
         # ALDO with shaded region
         ax3.plot(comms_aldo, subopt_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
-        ax3.fill_between(comms_aldo, subopt_aldo_mean - subopt_aldo_std, subopt_aldo_mean + subopt_aldo_std, 
-                          alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+        ax3.fill_between(comms_aldo, subopt_aldo_lower, subopt_aldo_upper, 
+                          alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
         ax3.set_title(f'Absolute Suboptimality (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
         ax3.set_xlabel('Number of Communications')
         ax3.set_ylabel('Suboptimality')
+        ax3.set_xlim(0, max_communications)
         ax3.legend()
         ax3.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -510,22 +579,23 @@ if __name__ == "__main__":
         fig4, ax4 = plt.subplots(figsize=(10, 6))
         ax4.semilogy(comms_dapd, rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
         ax4.fill_between(comms_dapd,
-                         np.maximum(rel_subopt_dapd - rel_subopt_dapd_std, 1e-12),
-                         rel_subopt_dapd + rel_subopt_dapd_std,
-                         alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+                         np.maximum(rel_subopt_dapd_lower, 1e-12),
+                         rel_subopt_dapd_upper,
+                         alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
         ax4.semilogy(comms_dapdbo, rel_subopt_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
         ax4.fill_between(comms_dapdbo,
-                         np.maximum(rel_subopt_dapdbo - rel_subopt_dapdbo_std, 1e-12),
-                         rel_subopt_dapdbo + rel_subopt_dapdbo_std,
-                         alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+                         np.maximum(rel_subopt_dapdbo_lower, 1e-12),
+                         rel_subopt_dapdbo_upper,
+                         alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
         ax4.semilogy(comms_aldo, rel_subopt_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
         ax4.fill_between(comms_aldo,
-                         np.maximum(rel_subopt_aldo - rel_subopt_aldo_std, 1e-12),
-                         rel_subopt_aldo + rel_subopt_aldo_std,
-                         alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+                         np.maximum(rel_subopt_aldo_lower, 1e-12),
+                         rel_subopt_aldo_upper,
+                         alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
         ax4.set_title(f'Relative Suboptimality: $|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
         ax4.set_xlabel('Number of Communications')
         ax4.set_ylabel('Relative Suboptimality')
+        ax4.set_xlim(0, max_communications)
         ax4.legend()
         ax4.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -543,24 +613,33 @@ if __name__ == "__main__":
         log_rel_subopt_dapdbo_std = rel_subopt_dapdbo_std / (rel_subopt_dapdbo + 1.0)
         log_rel_subopt_aldo_std = rel_subopt_aldo_std / (rel_subopt_aldo + 1.0)
         fig4b, ax4b = plt.subplots(figsize=(10, 6))
+        # Compute log relative suboptimality bounds
+        log_rel_subopt_dapd_lower = np.log(rel_subopt_dapd_lower + 1.0)
+        log_rel_subopt_dapd_upper = np.log(rel_subopt_dapd_upper + 1.0)
+        log_rel_subopt_dapdbo_lower = np.log(rel_subopt_dapdbo_lower + 1.0)
+        log_rel_subopt_dapdbo_upper = np.log(rel_subopt_dapdbo_upper + 1.0)
+        log_rel_subopt_aldo_lower = np.log(rel_subopt_aldo_lower + 1.0)
+        log_rel_subopt_aldo_upper = np.log(rel_subopt_aldo_upper + 1.0)
+        
         ax4b.plot(comms_dapd, log_rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
         ax4b.fill_between(comms_dapd,
-                          log_rel_subopt_dapd - log_rel_subopt_dapd_std,
-                          log_rel_subopt_dapd + log_rel_subopt_dapd_std,
-                          alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+                          log_rel_subopt_dapd_lower,
+                          log_rel_subopt_dapd_upper,
+                          alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
         ax4b.plot(comms_dapdbo, log_rel_subopt_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
         ax4b.fill_between(comms_dapdbo,
-                          log_rel_subopt_dapdbo - log_rel_subopt_dapdbo_std,
-                          log_rel_subopt_dapdbo + log_rel_subopt_dapdbo_std,
-                          alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+                          log_rel_subopt_dapdbo_lower,
+                          log_rel_subopt_dapdbo_upper,
+                          alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
         ax4b.plot(comms_aldo, log_rel_subopt_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
         ax4b.fill_between(comms_aldo,
-                          log_rel_subopt_aldo - log_rel_subopt_aldo_std,
-                          log_rel_subopt_aldo + log_rel_subopt_aldo_std,
-                          alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+                          log_rel_subopt_aldo_lower,
+                          log_rel_subopt_aldo_upper,
+                          alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
         ax4b.set_title(f'Log Relative Suboptimality: $\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
         ax4b.set_xlabel('Number of Communications')
         ax4b.set_ylabel('$\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$')
+        ax4b.set_xlim(0, max_communications)
         ax4b.legend()
         ax4b.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -573,22 +652,23 @@ if __name__ == "__main__":
     fig5, ax5 = plt.subplots(figsize=(10, 6))
     ax5.semilogy(comms_dapd, rel_cons_dapd, lw=2, label='D-APD (mean)', color='blue')
     ax5.fill_between(comms_dapd,
-                     np.maximum(rel_cons_dapd - rel_cons_dapd_std, 1e-12),
-                     rel_cons_dapd + rel_cons_dapd_std,
-                     alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+                     np.maximum(rel_cons_dapd_lower, 1e-12),
+                     rel_cons_dapd_upper,
+                     alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
     ax5.semilogy(comms_dapdbo, rel_cons_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
     ax5.fill_between(comms_dapdbo,
-                     np.maximum(rel_cons_dapdbo - rel_cons_dapdbo_std, 1e-12),
-                     rel_cons_dapdbo + rel_cons_dapdbo_std,
-                     alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+                     np.maximum(rel_cons_dapdbo_lower, 1e-12),
+                     rel_cons_dapdbo_upper,
+                     alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
     ax5.semilogy(comms_aldo, rel_cons_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
     ax5.fill_between(comms_aldo,
-                     np.maximum(rel_cons_aldo - rel_cons_aldo_std, 1e-12),
-                     rel_cons_aldo + rel_cons_aldo_std,
-                     alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+                     np.maximum(rel_cons_aldo_lower, 1e-12),
+                     rel_cons_aldo_upper,
+                     alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
     ax5.set_title(f'Relative Consensus Error: $\\|x_i^k - \\bar{{x}}^k\\|^2/(N\\|\\bar{{x}}^k\\|^2)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax5.set_xlabel('Number of Communications')
     ax5.set_ylabel('Relative Consensus Error')
+    ax5.set_xlim(0, max_communications)
     ax5.legend()
     ax5.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -720,24 +800,25 @@ if __name__ == "__main__":
     # D-APD: tau (constant, no backtracking)
     ax7.semilogy(comms_dapd, tau_dapd_mean, lw=2, label='D-APD: $\\bar{\\tau}$ (mean)', color='blue')
     ax7.fill_between(comms_dapd,
-                     np.maximum(tau_dapd_mean - tau_dapd_std, 1e-12),
-                     tau_dapd_mean + tau_dapd_std,
-                     alpha=0.2, color='blue', label=f'D-APD (±1 std, {num_simulations} sims)')
+                     np.maximum(tau_dapd_lower, 1e-12),
+                     tau_dapd_upper,
+                     alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
     # D-APDB: tau (adaptive with backtracking)
     ax7.semilogy(comms_dapdbo, tau_dapdbo_mean, lw=2, label='D-APDB: $\\bar{\\tau}$ (mean)', color='red', linestyle='--')
     ax7.fill_between(comms_dapdbo,
-                     np.maximum(tau_dapdbo_mean - tau_dapdbo_std, 1e-12),
-                     tau_dapdbo_mean + tau_dapdbo_std,
-                     alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+                     np.maximum(tau_dapdbo_lower, 1e-12),
+                     tau_dapdbo_upper,
+                     alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
     # global-DATOS: alpha (adaptive with backtracking)
     ax7.semilogy(comms_aldo, alpha_aldo_mean, lw=2, label='global-DATOS: $\\alpha$ (mean)', color='green', linestyle=':')
     ax7.fill_between(comms_aldo,
-                     np.maximum(alpha_aldo_mean - alpha_aldo_std, 1e-12),
-                     alpha_aldo_mean + alpha_aldo_std,
-                     alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+                     np.maximum(alpha_aldo_lower, 1e-12),
+                     alpha_aldo_upper,
+                     alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
     ax7.set_title(f'Step Size Evolution (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
     ax7.set_xlabel('Number of Communications')
     ax7.set_ylabel('Step Size ($\\tau$ or $\\alpha$)')
+    ax7.set_xlim(0, max_communications)
     ax7.legend()
     ax7.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -759,6 +840,7 @@ if __name__ == "__main__":
     ax.set_title('(a) Objective Function', fontsize=12, fontweight='bold')
     ax.set_xlabel('Number of Communications')
     ax.set_ylabel('Objective Value')
+    ax.set_xlim(0, max_communications)
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     
@@ -770,6 +852,7 @@ if __name__ == "__main__":
     ax.set_title('(b) Relative Suboptimality', fontsize=12, fontweight='bold')
     ax.set_xlabel('Number of Communications')
     ax.set_ylabel('$|\\varphi(\\bar{x}^k) - \\varphi^*|/|\\varphi^*|$')
+    ax.set_xlim(0, max_communications)
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     
@@ -781,6 +864,7 @@ if __name__ == "__main__":
     ax.set_title('(c) Step Size Evolution', fontsize=12, fontweight='bold')
     ax.set_xlabel('Number of Communications')
     ax.set_ylabel('Step Size')
+    ax.set_xlim(0, max_communications)
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     
@@ -792,6 +876,7 @@ if __name__ == "__main__":
     ax.set_title('(d) Consensus Error', fontsize=12, fontweight='bold')
     ax.set_xlabel('Number of Communications')
     ax.set_ylabel('Consensus Error')
+    ax.set_xlim(0, max_communications)
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     
@@ -803,6 +888,7 @@ if __name__ == "__main__":
     ax.set_title('(e) Relative Consensus Error', fontsize=12, fontweight='bold')
     ax.set_xlabel('Number of Communications')
     ax.set_ylabel('$\\sum_i\\|x_i^k - \\bar{x}^k\\|^2/(N\\|\\bar{x}^k\\|^2)$')
+    ax.set_xlim(0, max_communications)
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     
