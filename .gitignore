@@ -34,6 +34,7 @@ dist/
 *.npy
 *.h5
 *.png
+*.pdf
 
 # Large binary files
 *.dylib
