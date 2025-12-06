@@ -667,18 +667,19 @@ if __name__ == "__main__":
     # 1. Objective Function
     fig1, ax1 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
-    ax1.plot(grad_calls_dapd, objs_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
+    ax1.plot(grad_calls_dapd, objs_dapd_mean, lw=2, label='D-APD', color='blue')
     ax1.fill_between(grad_calls_dapd, objs_dapd_lower, objs_dapd_upper, 
-                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
+                      alpha=0.2, color='blue')
     # D-APDB with shaded region
-    ax1.plot(grad_calls_dapdb, objs_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax1.plot(grad_calls_dapdb, objs_dapdb_mean, lw=2, label='D-APDB', color='red', linestyle='--')
     ax1.fill_between(grad_calls_dapdb, objs_dapdb_lower, objs_dapdb_upper, 
-                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
+                      alpha=0.2, color='red')
     ax1.axhline(f_star, color='k', ls=':', alpha=0.5, label='$\\varphi^*$')
-    ax1.set_title(f'Objective Function: $\\varphi(\\bar{{x}}^k)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax1.set_xlabel('Average Number of Gradient Calls per Node')
-    ax1.set_ylabel('Objective Value')
-    ax1.legend()
+    ax1.set_title('Objective Function', fontsize=26, fontweight='bold')
+    ax1.set_xlabel('Average Number of Gradient Calls per Node', fontsize=24)
+    ax1.set_ylabel('$\\varphi(\\bar{x}^k)$', fontsize=24)
+    ax1.legend(fontsize=20)
+    ax1.tick_params(axis='both', labelsize=18)
     ax1.grid(True, alpha=0.3)
     plt.tight_layout()
     filename1 = os.path.join(subfolder_path, f"{base_filename}_objective.pdf")
@@ -689,17 +690,18 @@ if __name__ == "__main__":
     # 2. Consensus Error
     fig2, ax2 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
-    ax2.plot(grad_calls_dapd, cons_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
+    ax2.plot(grad_calls_dapd, cons_dapd_mean, lw=2, label='D-APD', color='blue')
     ax2.fill_between(grad_calls_dapd, cons_dapd_lower, cons_dapd_upper, 
-                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
+                      alpha=0.2, color='blue')
     # D-APDB with shaded region
-    ax2.plot(grad_calls_dapdb, cons_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax2.plot(grad_calls_dapdb, cons_dapdb_mean, lw=2, label='D-APDB', color='red', linestyle='--')
     ax2.fill_between(grad_calls_dapdb, cons_dapdb_lower, cons_dapdb_upper, 
-                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
-    ax2.set_title(f'Consensus Error: $\\frac{{1}}{{N}}\\sum_{{i=1}}^N \\|x_i^k - \\bar{{x}}^k\\|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax2.set_xlabel('Average Number of Gradient Calls per Node')
-    ax2.set_ylabel('Consensus Error')
-    ax2.legend()
+                      alpha=0.2, color='red')
+    ax2.set_title('Consensus Error', fontsize=26, fontweight='bold')
+    ax2.set_xlabel('Average Number of Gradient Calls per Node', fontsize=24)
+    ax2.set_ylabel('$\\frac{1}{N}\\sum_{i=1}^N \\|x_i^k - \\bar{x}^k\\|$', fontsize=24)
+    ax2.legend(fontsize=20)
+    ax2.tick_params(axis='both', labelsize=18)
     ax2.grid(True, alpha=0.3)
     plt.tight_layout()
     filename2 = os.path.join(subfolder_path, f"{base_filename}_consensus.pdf")
@@ -714,34 +716,35 @@ if __name__ == "__main__":
     
     if all_zero_dapd and all_zero_dapdb:
         # All constraints satisfied - use linear scale
-        ax3.plot(grad_calls_dapd, maxV_dapd_mean, lw=2, label='D-APD (mean)', color='blue', marker='.', markersize=2)
+        ax3.plot(grad_calls_dapd, maxV_dapd_mean, lw=2, label='D-APD', color='blue', marker='.', markersize=2)
         ax3.fill_between(grad_calls_dapd, maxV_dapd_lower, maxV_dapd_upper, 
                           alpha=0.2, color='blue')
-        ax3.plot(grad_calls_dapdb, maxV_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--', marker='.', markersize=2)
+        ax3.plot(grad_calls_dapdb, maxV_dapdb_mean, lw=2, label='D-APDB', color='red', linestyle='--', marker='.', markersize=2)
         ax3.fill_between(grad_calls_dapdb, maxV_dapdb_lower, maxV_dapdb_upper, 
                           alpha=0.2, color='red')
         ax3.set_yscale('linear')
         ax3.axhline(0, color='gray', ls=':', alpha=0.3)
-        ax3.set_title(f'Constraint Violations: $\\max_{{i \\in N}} \\{{g_i(\\bar{{x}}^k)_+\\}}$ (All Satisfied) (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
+        ax3.set_title('Constraint Violations', fontsize=26, fontweight='bold')
     else:
         # Some violations exist - use log scale
         maxV_dapd_plot = np.maximum(maxV_dapd_mean, 1e-12)
         maxV_dapdb_plot = np.maximum(maxV_dapdb_mean, 1e-12)
-        ax3.semilogy(grad_calls_dapd, maxV_dapd_plot, lw=2, label='D-APD (mean)', color='blue')
+        ax3.semilogy(grad_calls_dapd, maxV_dapd_plot, lw=2, label='D-APD', color='blue')
         ax3.fill_between(grad_calls_dapd, 
                           np.maximum(maxV_dapd_lower, 1e-12), 
                           np.maximum(maxV_dapd_upper, 1e-12), 
                           alpha=0.2, color='blue')
-        ax3.semilogy(grad_calls_dapdb, maxV_dapdb_plot, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax3.semilogy(grad_calls_dapdb, maxV_dapdb_plot, lw=2, label='D-APDB', color='red', linestyle='--')
         ax3.fill_between(grad_calls_dapdb, 
                           np.maximum(maxV_dapdb_lower, 1e-12), 
                           np.maximum(maxV_dapdb_upper, 1e-12), 
                           alpha=0.2, color='red')
-        ax3.set_title(f'Constraint Violations: $\\max_{{i \\in N}} \\{{g_i(\\bar{{x}}^k)_+\\}}$ (Log Scale) (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
+        ax3.set_title('Constraint Violations', fontsize=26, fontweight='bold')
     
-    ax3.set_xlabel('Average Number of Gradient Calls per Node')
-    ax3.set_ylabel('Max Violation')
-    ax3.legend()
+    ax3.set_xlabel('Average Number of Gradient Calls per Node', fontsize=24)
+    ax3.set_ylabel('$\\max_{i \\in \\mathcal{N}} \\{g_i(\\bar{x}^k)_+\\}$', fontsize=24)
+    ax3.legend(fontsize=20)
+    ax3.tick_params(axis='both', labelsize=18)
     ax3.grid(True, alpha=0.3)
     plt.tight_layout()
     filename3 = os.path.join(subfolder_path, f"{base_filename}_constraint_violation.pdf")
@@ -753,17 +756,18 @@ if __name__ == "__main__":
     if not all(np.isnan(subopt_dapd_mean)) and not all(np.isnan(subopt_dapdb_mean)):
         fig4, ax4 = plt.subplots(figsize=(10, 6))
         # D-APD with shaded region
-        ax4.plot(grad_calls_dapd, subopt_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
+        ax4.plot(grad_calls_dapd, subopt_dapd_mean, lw=2, label='D-APD', color='blue')
         ax4.fill_between(grad_calls_dapd, subopt_dapd_lower, subopt_dapd_upper, 
-                          alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
+                          alpha=0.2, color='blue')
         # D-APDB with shaded region
-        ax4.plot(grad_calls_dapdb, subopt_dapdb_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax4.plot(grad_calls_dapdb, subopt_dapdb_mean, lw=2, label='D-APDB', color='red', linestyle='--')
         ax4.fill_between(grad_calls_dapdb, subopt_dapdb_lower, subopt_dapdb_upper, 
-                          alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
-        ax4.set_title(f'Absolute Suboptimality: $|\\varphi(\\bar{{x}}^k) - \\varphi^*|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-        ax4.set_xlabel('Average Number of Gradient Calls per Node')
-        ax4.set_ylabel('Suboptimality')
-        ax4.legend()
+                          alpha=0.2, color='red')
+        ax4.set_title('Absolute Suboptimality', fontsize=26, fontweight='bold')
+        ax4.set_xlabel('Average Number of Gradient Calls per Node', fontsize=24)
+        ax4.set_ylabel('$|\\varphi(\\bar{x}^k) - \\varphi^*|$', fontsize=24)
+        ax4.legend(fontsize=20)
+        ax4.tick_params(axis='both', labelsize=18)
         ax4.grid(True, alpha=0.3)
         plt.tight_layout()
         filename4 = os.path.join(subfolder_path, f"{base_filename}_suboptimality.pdf")
@@ -775,21 +779,22 @@ if __name__ == "__main__":
     if not all(np.isnan(rel_subopt_dapd)) and not all(np.isnan(rel_subopt_dapdb)):
         fig5, ax5 = plt.subplots(figsize=(10, 6))
         # D-APD with shaded region
-        ax5.semilogy(grad_calls_dapd, rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
+        ax5.semilogy(grad_calls_dapd, rel_subopt_dapd, lw=2, label='D-APD', color='blue')
         ax5.fill_between(grad_calls_dapd, 
                           np.maximum(rel_subopt_dapd_lower, 1e-12), 
                           np.maximum(rel_subopt_dapd_upper, 1e-12), 
-                          alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
+                          alpha=0.2, color='blue')
         # D-APDB with shaded region
-        ax5.semilogy(grad_calls_dapdb, rel_subopt_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax5.semilogy(grad_calls_dapdb, rel_subopt_dapdb, lw=2, label='D-APDB', color='red', linestyle='--')
         ax5.fill_between(grad_calls_dapdb, 
                           np.maximum(rel_subopt_dapdb_lower, 1e-12), 
                           np.maximum(rel_subopt_dapdb_upper, 1e-12), 
-                          alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
-        ax5.set_title(f'Relative Suboptimality: $|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-        ax5.set_xlabel('Average Number of Gradient Calls per Node')
-        ax5.set_ylabel('Relative Suboptimality')
-        ax5.legend()
+                          alpha=0.2, color='red')
+        ax5.set_title('Relative Suboptimality', fontsize=26, fontweight='bold')
+        ax5.set_xlabel('Average Number of Gradient Calls per Node', fontsize=24)
+        ax5.set_ylabel('$|\\varphi(\\bar{x}^k) - \\varphi^*|/|\\varphi^*|$', fontsize=24)
+        ax5.legend(fontsize=20)
+        ax5.tick_params(axis='both', labelsize=18)
         ax5.grid(True, alpha=0.3)
         plt.tight_layout()
         filename5 = os.path.join(subfolder_path, f"{base_filename}_relative_suboptimality.pdf")
@@ -801,21 +806,22 @@ if __name__ == "__main__":
     if not all(np.isnan(rel_subopt_dapd)) and not all(np.isnan(rel_subopt_dapdb)):
         fig5b, ax5b = plt.subplots(figsize=(10, 6))
         # D-APD with shaded region
-        ax5b.plot(grad_calls_dapd, log_rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
+        ax5b.plot(grad_calls_dapd, log_rel_subopt_dapd, lw=2, label='D-APD', color='blue')
         ax5b.fill_between(grad_calls_dapd, 
                           log_rel_subopt_dapd_lower, 
                           log_rel_subopt_dapd_upper, 
-                          alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
+                          alpha=0.2, color='blue')
         # D-APDB with shaded region
-        ax5b.plot(grad_calls_dapdb, log_rel_subopt_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax5b.plot(grad_calls_dapdb, log_rel_subopt_dapdb, lw=2, label='D-APDB', color='red', linestyle='--')
         ax5b.fill_between(grad_calls_dapdb, 
                           log_rel_subopt_dapdb_lower, 
                           log_rel_subopt_dapdb_upper, 
-                          alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
-        ax5b.set_title(f'Log Relative Suboptimality: $\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-        ax5b.set_xlabel('Average Number of Gradient Calls per Node')
-        ax5b.set_ylabel('$\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$')
-        ax5b.legend()
+                          alpha=0.2, color='red')
+        ax5b.set_title('Log Relative Suboptimality', fontsize=26, fontweight='bold')
+        ax5b.set_xlabel('Average Number of Gradient Calls per Node', fontsize=24)
+        ax5b.set_ylabel('$\\log((|\\varphi(\\bar{x}^k) - \\varphi^*|/|\\varphi^*|) + 1)$', fontsize=24)
+        ax5b.legend(fontsize=20)
+        ax5b.tick_params(axis='both', labelsize=18)
         ax5b.grid(True, alpha=0.3)
         plt.tight_layout()
         filename5b = os.path.join(subfolder_path, f"{base_filename}_log_relative_suboptimality.pdf")
@@ -826,21 +832,22 @@ if __name__ == "__main__":
     # 6. Relative Consensus Error: ||x_i^k - x_bar^k||^2 / (N * ||x_bar^k||^2)
     fig6, ax6 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
-    ax6.semilogy(grad_calls_dapd, rel_cons_dapd, lw=2, label='D-APD (mean)', color='blue')
+    ax6.semilogy(grad_calls_dapd, rel_cons_dapd, lw=2, label='D-APD', color='blue')
     ax6.fill_between(grad_calls_dapd, 
                       np.maximum(rel_cons_dapd_lower, 1e-12), 
                       np.maximum(rel_cons_dapd_upper, 1e-12), 
-                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
+                      alpha=0.2, color='blue')
     # D-APDB with shaded region
-    ax6.semilogy(grad_calls_dapdb, rel_cons_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax6.semilogy(grad_calls_dapdb, rel_cons_dapdb, lw=2, label='D-APDB', color='red', linestyle='--')
     ax6.fill_between(grad_calls_dapdb, 
                       np.maximum(rel_cons_dapdb_lower, 1e-12), 
                       np.maximum(rel_cons_dapdb_upper, 1e-12), 
-                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
-    ax6.set_title(f'Relative Consensus Error: $\\|x_i^k - \\bar{{x}}^k\\|^2/(N\\|\\bar{{x}}^k\\|^2)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax6.set_xlabel('Average Number of Gradient Calls per Node')
-    ax6.set_ylabel('Relative Consensus Error')
-    ax6.legend()
+                      alpha=0.2, color='red')
+    ax6.set_title('Relative Consensus Error', fontsize=26, fontweight='bold')
+    ax6.set_xlabel('Average Number of Gradient Calls per Node', fontsize=24)
+    ax6.set_ylabel('$\\sum_i\\|x_i^k - \\bar{x}^k\\|^2/(N\\|\\bar{x}^k\\|^2)$', fontsize=24)
+    ax6.legend(fontsize=20)
+    ax6.tick_params(axis='both', labelsize=18)
     ax6.grid(True, alpha=0.3)
     plt.tight_layout()
     filename6 = os.path.join(subfolder_path, f"{base_filename}_relative_consensus.pdf")
@@ -851,21 +858,22 @@ if __name__ == "__main__":
     # 7. Relative Constraint Violation: max_i ||(g_i(x_bar^k))_+|| / max_i ||(g_i(x_bar^0))_+||
     fig7, ax7 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
-    ax7.semilogy(grad_calls_dapd, rel_maxV_dapd, lw=2, label='D-APD (mean)', color='blue')
+    ax7.semilogy(grad_calls_dapd, rel_maxV_dapd, lw=2, label='D-APD', color='blue')
     ax7.fill_between(grad_calls_dapd, 
                       np.maximum(rel_maxV_dapd_lower, 1e-12), 
                       np.maximum(rel_maxV_dapd_upper, 1e-12), 
-                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
+                      alpha=0.2, color='blue')
     # D-APDB with shaded region
-    ax7.semilogy(grad_calls_dapdb, rel_maxV_dapdb, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax7.semilogy(grad_calls_dapdb, rel_maxV_dapdb, lw=2, label='D-APDB', color='red', linestyle='--')
     ax7.fill_between(grad_calls_dapdb, 
                       np.maximum(rel_maxV_dapdb_lower, 1e-12), 
                       np.maximum(rel_maxV_dapdb_upper, 1e-12), 
-                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
-    ax7.set_title(f'Relative Constraint Violation: $\\max_{{i\\in\\mathcal{{N}}}} \\|(g_i(\\bar{{x}}^k))_+\\|/\\max_{{i\\in\\mathcal{{N}}}} \\|(g_i(\\bar{{x}}^0))_+\\|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax7.set_xlabel('Average Number of Gradient Calls per Node')
-    ax7.set_ylabel('Relative Constraint Violation')
-    ax7.legend()
+                      alpha=0.2, color='red')
+    ax7.set_title('Relative Constraint Violation', fontsize=26, fontweight='bold')
+    ax7.set_xlabel('Average Number of Gradient Calls per Node', fontsize=24)
+    ax7.set_ylabel('$\\max_{i\\in\\mathcal{N}} \\|(g_i(\\bar{x}^k))_+\\|/\\max_{i\\in\\mathcal{N}} \\|(g_i(\\bar{x}^0))_+\\|$', fontsize=24)
+    ax7.legend(fontsize=20)
+    ax7.tick_params(axis='both', labelsize=18)
     ax7.grid(True, alpha=0.3)
     plt.tight_layout()
     filename7 = os.path.join(subfolder_path, f"{base_filename}_relative_constraint_violation.pdf")
@@ -884,15 +892,16 @@ if __name__ == "__main__":
         backtrack_dapdb_std_limited = backtrack_dapdb_std[:max_points]
         
         # D-APDB with shaded region
-        ax8.plot(iterations, backtrack_dapdb_mean_limited, lw=2, label='D-APDB (mean)', color='red', linestyle='--', marker='o', markersize=4)
+        ax8.plot(iterations, backtrack_dapdb_mean_limited, lw=2, label='D-APDB', color='red', linestyle='--', marker='o', markersize=4)
         ax8.fill_between(iterations, 
                           backtrack_dapdb_mean_limited - backtrack_dapdb_std_limited, 
                           backtrack_dapdb_mean_limited + backtrack_dapdb_std_limited, 
-                          alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
-        ax8.set_title(f'Total Backtrack Iterations per Iteration (First 20 Iterations) (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-        ax8.set_xlabel('Iteration Number')
-        ax8.set_ylabel('Total Backtrack Iterations (All Nodes)')
-        ax8.legend()
+                          alpha=0.2, color='red')
+        ax8.set_title('Backtrack Iterations', fontsize=26, fontweight='bold')
+        ax8.set_xlabel('Iteration Number', fontsize=24)
+        ax8.set_ylabel('Total Backtrack Iterations (All Nodes)', fontsize=24)
+        ax8.legend(fontsize=20)
+        ax8.tick_params(axis='both', labelsize=18)
         ax8.grid(True, alpha=0.3)
         plt.tight_layout()
         filename8 = os.path.join(subfolder_path, f"{base_filename}_backtrack.pdf")

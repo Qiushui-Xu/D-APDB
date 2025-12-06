@@ -496,23 +496,24 @@ if __name__ == "__main__":
     # 1. Objective Function
     fig1, ax1 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
-    ax1.plot(comms_dapd, objs_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
+    ax1.plot(comms_dapd, objs_dapd_mean, lw=2, label='D-APD', color='blue')
     ax1.fill_between(comms_dapd, objs_dapd_lower, objs_dapd_upper, 
-                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
+                      alpha=0.2, color='blue')
     # D-APDB with shaded region
-    ax1.plot(comms_dapdbo, objs_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax1.plot(comms_dapdbo, objs_dapdbo_mean, lw=2, label='D-APDB0', color='red', linestyle='--')
     ax1.fill_between(comms_dapdbo, objs_dapdbo_lower, objs_dapdbo_upper, 
-                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
+                      alpha=0.2, color='red')
     # ALDO with shaded region
-    ax1.plot(comms_aldo, objs_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+    ax1.plot(comms_aldo, objs_aldo_mean, lw=2, label='global-DATOS', color='green', linestyle=':')
     ax1.fill_between(comms_aldo, objs_aldo_lower, objs_aldo_upper, 
-                      alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
+                      alpha=0.2, color='green')
     ax1.axhline(f_star, color='k', ls=':', alpha=0.5, label='$\\varphi^*$')
-    ax1.set_title(f'Objective Function with L1 Regularization (N={N}, n={n}, λ={lambda_l1}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax1.set_xlabel('Number of Communications')
-    ax1.set_ylabel('Objective Value')
+    ax1.set_title('Objective Function', fontsize=26, fontweight='bold')
+    ax1.set_xlabel('Number of Communications', fontsize=24)
+    ax1.set_ylabel('Objective Value', fontsize=24)
     ax1.set_xlim(0, max_communications)
-    ax1.legend()
+    ax1.legend(fontsize=20)
+    ax1.tick_params(axis='both', labelsize=18)
     ax1.grid(True, alpha=0.3)
     plt.tight_layout()
     filename1 = os.path.join(subfolder_path, f"{base_filename}_objective.pdf")
@@ -523,22 +524,23 @@ if __name__ == "__main__":
     # 2. Consensus Error
     fig2, ax2 = plt.subplots(figsize=(10, 6))
     # D-APD with shaded region
-    ax2.plot(comms_dapd, cons_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
+    ax2.plot(comms_dapd, cons_dapd_mean, lw=2, label='D-APD', color='blue')
     ax2.fill_between(comms_dapd, cons_dapd_lower, cons_dapd_upper, 
-                      alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
+                      alpha=0.2, color='blue')
     # D-APDB with shaded region
-    ax2.plot(comms_dapdbo, cons_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+    ax2.plot(comms_dapdbo, cons_dapdbo_mean, lw=2, label='D-APDB0', color='red', linestyle='--')
     ax2.fill_between(comms_dapdbo, cons_dapdbo_lower, cons_dapdbo_upper, 
-                      alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
+                      alpha=0.2, color='red')
     # ALDO with shaded region
-    ax2.plot(comms_aldo, cons_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+    ax2.plot(comms_aldo, cons_aldo_mean, lw=2, label='global-DATOS', color='green', linestyle=':')
     ax2.fill_between(comms_aldo, cons_aldo_lower, cons_aldo_upper, 
-                      alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
-    ax2.set_title(f'Consensus Error (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax2.set_xlabel('Number of Communications')
-    ax2.set_ylabel('Consensus Error')
+                      alpha=0.2, color='green')
+    ax2.set_title('Consensus Error', fontsize=26, fontweight='bold')
+    ax2.set_xlabel('Number of Communications', fontsize=24)
+    ax2.set_ylabel('Consensus Error', fontsize=24)
     ax2.set_xlim(0, max_communications)
-    ax2.legend()
+    ax2.legend(fontsize=20)
+    ax2.tick_params(axis='both', labelsize=18)
     ax2.grid(True, alpha=0.3)
     plt.tight_layout()
     filename2 = os.path.join(subfolder_path, f"{base_filename}_consensus.pdf")
@@ -550,22 +552,23 @@ if __name__ == "__main__":
     if not all(np.isnan(subopt_dapd_mean)) and not all(np.isnan(subopt_dapdbo_mean)) and not all(np.isnan(subopt_aldo_mean)):
         fig3, ax3 = plt.subplots(figsize=(10, 6))
         # D-APD with shaded region
-        ax3.plot(comms_dapd, subopt_dapd_mean, lw=2, label='D-APD (mean)', color='blue')
+        ax3.plot(comms_dapd, subopt_dapd_mean, lw=2, label='D-APD', color='blue')
         ax3.fill_between(comms_dapd, subopt_dapd_lower, subopt_dapd_upper, 
-                          alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
+                          alpha=0.2, color='blue')
         # D-APDB with shaded region
-        ax3.plot(comms_dapdbo, subopt_dapdbo_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+        ax3.plot(comms_dapdbo, subopt_dapdbo_mean, lw=2, label='D-APDB0', color='red', linestyle='--')
         ax3.fill_between(comms_dapdbo, subopt_dapdbo_lower, subopt_dapdbo_upper, 
-                          alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
+                          alpha=0.2, color='red')
         # ALDO with shaded region
-        ax3.plot(comms_aldo, subopt_aldo_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+        ax3.plot(comms_aldo, subopt_aldo_mean, lw=2, label='global-DATOS', color='green', linestyle=':')
         ax3.fill_between(comms_aldo, subopt_aldo_lower, subopt_aldo_upper, 
-                          alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
-        ax3.set_title(f'Absolute Suboptimality (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-        ax3.set_xlabel('Number of Communications')
-        ax3.set_ylabel('Suboptimality')
+                          alpha=0.2, color='green')
+        ax3.set_title('Absolute Suboptimality', fontsize=26, fontweight='bold')
+        ax3.set_xlabel('Number of Communications', fontsize=24)
+        ax3.set_ylabel('$|\\varphi(\\bar{x}^k) - \\varphi^*|$', fontsize=24)
         ax3.set_xlim(0, max_communications)
-        ax3.legend()
+        ax3.legend(fontsize=20)
+        ax3.tick_params(axis='both', labelsize=18)
         ax3.grid(True, alpha=0.3)
         plt.tight_layout()
         filename3 = os.path.join(subfolder_path, f"{base_filename}_suboptimality.pdf")
@@ -576,26 +579,27 @@ if __name__ == "__main__":
     # 4. Relative Suboptimality: |f(x_bar) - f*| / |f*|
     if not all(np.isnan(rel_subopt_dapd)) and not all(np.isnan(rel_subopt_dapdbo)) and not all(np.isnan(rel_subopt_aldo)):
         fig4, ax4 = plt.subplots(figsize=(10, 6))
-        ax4.semilogy(comms_dapd, rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
+        ax4.semilogy(comms_dapd, rel_subopt_dapd, lw=2, label='D-APD', color='blue')
         ax4.fill_between(comms_dapd,
                          np.maximum(rel_subopt_dapd_lower, 1e-12),
                          rel_subopt_dapd_upper,
-                         alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
-        ax4.semilogy(comms_dapdbo, rel_subopt_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+                         alpha=0.2, color='blue')
+        ax4.semilogy(comms_dapdbo, rel_subopt_dapdbo, lw=2, label='D-APDB0', color='red', linestyle='--')
         ax4.fill_between(comms_dapdbo,
                          np.maximum(rel_subopt_dapdbo_lower, 1e-12),
                          rel_subopt_dapdbo_upper,
-                         alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
-        ax4.semilogy(comms_aldo, rel_subopt_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+                         alpha=0.2, color='red')
+        ax4.semilogy(comms_aldo, rel_subopt_aldo, lw=2, label='global-DATOS', color='green', linestyle=':')
         ax4.fill_between(comms_aldo,
                          np.maximum(rel_subopt_aldo_lower, 1e-12),
                          rel_subopt_aldo_upper,
-                         alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
-        ax4.set_title(f'Relative Suboptimality: $|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-        ax4.set_xlabel('Number of Communications')
-        ax4.set_ylabel('Relative Suboptimality')
+                         alpha=0.2, color='green')
+        ax4.set_title('Relative Suboptimality', fontsize=26, fontweight='bold')
+        ax4.set_xlabel('Number of Communications', fontsize=24)
+        ax4.set_ylabel('$|\\varphi(\\bar{x}^k) - \\varphi^*|/|\\varphi^*|$', fontsize=24)
         ax4.set_xlim(0, max_communications)
-        ax4.legend()
+        ax4.legend(fontsize=20)
+        ax4.tick_params(axis='both', labelsize=18)
         ax4.grid(True, alpha=0.3)
         plt.tight_layout()
         filename4 = os.path.join(subfolder_path, f"{base_filename}_relative_suboptimality.pdf")
@@ -620,26 +624,27 @@ if __name__ == "__main__":
         log_rel_subopt_aldo_lower = np.log(rel_subopt_aldo_lower + 1.0)
         log_rel_subopt_aldo_upper = np.log(rel_subopt_aldo_upper + 1.0)
         
-        ax4b.plot(comms_dapd, log_rel_subopt_dapd, lw=2, label='D-APD (mean)', color='blue')
+        ax4b.plot(comms_dapd, log_rel_subopt_dapd, lw=2, label='D-APD', color='blue')
         ax4b.fill_between(comms_dapd,
                           log_rel_subopt_dapd_lower,
                           log_rel_subopt_dapd_upper,
-                          alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
-        ax4b.plot(comms_dapdbo, log_rel_subopt_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+                          alpha=0.2, color='blue')
+        ax4b.plot(comms_dapdbo, log_rel_subopt_dapdbo, lw=2, label='D-APDB0', color='red', linestyle='--')
         ax4b.fill_between(comms_dapdbo,
                           log_rel_subopt_dapdbo_lower,
                           log_rel_subopt_dapdbo_upper,
-                          alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
-        ax4b.plot(comms_aldo, log_rel_subopt_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+                          alpha=0.2, color='red')
+        ax4b.plot(comms_aldo, log_rel_subopt_aldo, lw=2, label='global-DATOS', color='green', linestyle=':')
         ax4b.fill_between(comms_aldo,
                           log_rel_subopt_aldo_lower,
                           log_rel_subopt_aldo_upper,
-                          alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
-        ax4b.set_title(f'Log Relative Suboptimality: $\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-        ax4b.set_xlabel('Number of Communications')
-        ax4b.set_ylabel('$\\log((|\\varphi(\\bar{{x}}^k) - \\varphi^*|/|\\varphi^*|) + 1)$')
+                          alpha=0.2, color='green')
+        ax4b.set_title('Log Relative Suboptimality', fontsize=26, fontweight='bold')
+        ax4b.set_xlabel('Number of Communications', fontsize=24)
+        ax4b.set_ylabel('$\\log((|\\varphi(\\bar{x}^k) - \\varphi^*|/|\\varphi^*|) + 1)$', fontsize=24)
         ax4b.set_xlim(0, max_communications)
-        ax4b.legend()
+        ax4b.legend(fontsize=20)
+        ax4b.tick_params(axis='both', labelsize=18)
         ax4b.grid(True, alpha=0.3)
         plt.tight_layout()
         filename4b = os.path.join(subfolder_path, f"{base_filename}_log_relative_suboptimality.pdf")
@@ -649,26 +654,27 @@ if __name__ == "__main__":
 
     # 5. Relative Consensus Error: ||x_i^k - x_bar^k||^2 / (N * ||x_bar^k||^2)
     fig5, ax5 = plt.subplots(figsize=(10, 6))
-    ax5.semilogy(comms_dapd, rel_cons_dapd, lw=2, label='D-APD (mean)', color='blue')
+    ax5.semilogy(comms_dapd, rel_cons_dapd, lw=2, label='D-APD', color='blue')
     ax5.fill_between(comms_dapd,
                      np.maximum(rel_cons_dapd_lower, 1e-12),
                      rel_cons_dapd_upper,
-                     alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
-    ax5.semilogy(comms_dapdbo, rel_cons_dapdbo, lw=2, label='D-APDB (mean)', color='red', linestyle='--')
+                     alpha=0.2, color='blue')
+    ax5.semilogy(comms_dapdbo, rel_cons_dapdbo, lw=2, label='D-APDB0', color='red', linestyle='--')
     ax5.fill_between(comms_dapdbo,
                      np.maximum(rel_cons_dapdbo_lower, 1e-12),
                      rel_cons_dapdbo_upper,
-                     alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
-    ax5.semilogy(comms_aldo, rel_cons_aldo, lw=2, label='global-DATOS (mean)', color='green', linestyle=':')
+                     alpha=0.2, color='red')
+    ax5.semilogy(comms_aldo, rel_cons_aldo, lw=2, label='global-DATOS', color='green', linestyle=':')
     ax5.fill_between(comms_aldo,
                      np.maximum(rel_cons_aldo_lower, 1e-12),
                      rel_cons_aldo_upper,
-                     alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
-    ax5.set_title(f'Relative Consensus Error: $\\|x_i^k - \\bar{{x}}^k\\|^2/(N\\|\\bar{{x}}^k\\|^2)$ (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax5.set_xlabel('Number of Communications')
-    ax5.set_ylabel('Relative Consensus Error')
+                     alpha=0.2, color='green')
+    ax5.set_title('Relative Consensus Error', fontsize=26, fontweight='bold')
+    ax5.set_xlabel('Number of Communications', fontsize=24)
+    ax5.set_ylabel('$\\sum_i\\|x_i^k - \\bar{x}^k\\|^2/(N\\|\\bar{x}^k\\|^2)$', fontsize=24)
     ax5.set_xlim(0, max_communications)
-    ax5.legend()
+    ax5.legend(fontsize=20)
+    ax5.tick_params(axis='both', labelsize=18)
     ax5.grid(True, alpha=0.3)
     plt.tight_layout()
     filename5 = os.path.join(subfolder_path, f"{base_filename}_relative_consensus.pdf")
@@ -770,23 +776,24 @@ if __name__ == "__main__":
     iterations = np.arange(max_iterations)
     
     # D-APDB with shaded region
-    ax6.plot(iterations, backtrack_dapdbo_iter_mean, lw=2, label='D-APDB (mean)', color='red', linestyle='--', marker='o', markersize=4)
+    ax6.plot(iterations, backtrack_dapdbo_iter_mean, lw=2, label='D-APDB0', color='red', linestyle='--', marker='o', markersize=4)
     ax6.fill_between(iterations, 
                       backtrack_dapdbo_iter_mean - backtrack_dapdbo_iter_std, 
                       backtrack_dapdbo_iter_mean + backtrack_dapdbo_iter_std, 
-                      alpha=0.2, color='red', label=f'D-APDB (±1 std, {num_simulations} sims)')
+                      alpha=0.2, color='red')
     
     # global-DATOS with shaded region
-    ax6.plot(iterations, backtrack_aldo_iter_mean, lw=2, label='global-DATOS (mean)', color='green', linestyle=':', marker='s', markersize=4)
+    ax6.plot(iterations, backtrack_aldo_iter_mean, lw=2, label='global-DATOS', color='green', linestyle=':', marker='s', markersize=4)
     ax6.fill_between(iterations, 
                       backtrack_aldo_iter_mean - backtrack_aldo_iter_std, 
                       backtrack_aldo_iter_mean + backtrack_aldo_iter_std, 
-                      alpha=0.2, color='green', label=f'global-DATOS (±1 std, {num_simulations} sims)')
+                      alpha=0.2, color='green')
     
-    ax6.set_title(f'Total Backtrack Iterations per Iteration (First {max_iterations} iterations, N={N}, n={n})', fontsize=14, fontweight='bold')
-    ax6.set_xlabel('Iteration Number')
-    ax6.set_ylabel('Total Backtrack Iterations (All Nodes)')
-    ax6.legend()
+    ax6.set_title('Backtrack Iterations', fontsize=26, fontweight='bold')
+    ax6.set_xlabel('Iteration Number', fontsize=24)
+    ax6.set_ylabel('Total Backtrack Iterations (All Nodes)', fontsize=24)
+    ax6.legend(fontsize=20)
+    ax6.tick_params(axis='both', labelsize=18)
     ax6.grid(True, alpha=0.3)
     plt.tight_layout()
     filename6 = os.path.join(subfolder_path, f"{base_filename}_backtrack.pdf")
@@ -797,28 +804,29 @@ if __name__ == "__main__":
     # 7. Step Size (tau/alpha) Evolution
     fig7, ax7 = plt.subplots(figsize=(10, 6))
     # D-APD: tau (constant, no backtracking)
-    ax7.semilogy(comms_dapd, tau_dapd_mean, lw=2, label='D-APD: $\\bar{\\tau}$ (mean)', color='blue')
+    ax7.semilogy(comms_dapd, tau_dapd_mean, lw=2, label='D-APD: $\\bar{\\tau}$', color='blue')
     ax7.fill_between(comms_dapd,
                      np.maximum(tau_dapd_lower, 1e-12),
                      tau_dapd_upper,
-                     alpha=0.2, color='blue', label=f'D-APD ({shade_label_text}, {num_simulations} sims)')
+                     alpha=0.2, color='blue')
     # D-APDB: tau (adaptive with backtracking)
-    ax7.semilogy(comms_dapdbo, tau_dapdbo_mean, lw=2, label='D-APDB: $\\bar{\\tau}$ (mean)', color='red', linestyle='--')
+    ax7.semilogy(comms_dapdbo, tau_dapdbo_mean, lw=2, label='D-APDB0: $\\bar{\\tau}$', color='red', linestyle='--')
     ax7.fill_between(comms_dapdbo,
                      np.maximum(tau_dapdbo_lower, 1e-12),
                      tau_dapdbo_upper,
-                     alpha=0.2, color='red', label=f'D-APDB ({shade_label_text}, {num_simulations} sims)')
+                     alpha=0.2, color='red')
     # global-DATOS: alpha (adaptive with backtracking)
-    ax7.semilogy(comms_aldo, alpha_aldo_mean, lw=2, label='global-DATOS: $\\alpha$ (mean)', color='green', linestyle=':')
+    ax7.semilogy(comms_aldo, alpha_aldo_mean, lw=2, label='global-DATOS: $\\alpha$', color='green', linestyle=':')
     ax7.fill_between(comms_aldo,
                      np.maximum(alpha_aldo_lower, 1e-12),
                      alpha_aldo_upper,
-                     alpha=0.2, color='green', label=f'global-DATOS ({shade_label_text}, {num_simulations} sims)')
-    ax7.set_title(f'Step Size Evolution (N={N}, n={n}, {num_simulations} simulations)', fontsize=14, fontweight='bold')
-    ax7.set_xlabel('Number of Communications')
-    ax7.set_ylabel('Step Size ($\\tau$ or $\\alpha$)')
+                     alpha=0.2, color='green')
+    ax7.set_title('Step Size Evolution', fontsize=26, fontweight='bold')
+    ax7.set_xlabel('Number of Communications', fontsize=24)
+    ax7.set_ylabel('Step Size ($\\tau$ or $\\alpha$)', fontsize=24)
     ax7.set_xlim(0, max_communications)
-    ax7.legend()
+    ax7.legend(fontsize=20)
+    ax7.tick_params(axis='both', labelsize=18)
     ax7.grid(True, alpha=0.3)
     plt.tight_layout()
     filename7 = os.path.join(subfolder_path, f"{base_filename}_stepsize.pdf")
@@ -833,78 +841,82 @@ if __name__ == "__main__":
     # (0,0) Objective Function
     ax = axes[0, 0]
     ax.plot(comms_dapd, objs_dapd_mean, lw=2, label='D-APD', color='blue')
-    ax.plot(comms_dapdbo, objs_dapdbo_mean, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.plot(comms_dapdbo, objs_dapdbo_mean, lw=2, label='D-APDB0', color='red', linestyle='--')
     ax.plot(comms_aldo, objs_aldo_mean, lw=2, label='global-DATOS', color='green', linestyle=':')
     ax.axhline(f_star, color='k', ls=':', alpha=0.5, label='$\\varphi^*$')
-    ax.set_title('(a) Objective Function', fontsize=12, fontweight='bold')
-    ax.set_xlabel('Number of Communications')
-    ax.set_ylabel('Objective Value')
+    ax.set_title('(a) Objective Function', fontsize=24, fontweight='bold')
+    ax.set_xlabel('Number of Communications', fontsize=20)
+    ax.set_ylabel('Objective Value', fontsize=20)
     ax.set_xlim(0, max_communications)
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=18)
+    ax.tick_params(axis='both', labelsize=16)
     ax.grid(True, alpha=0.3)
     
     # (0,1) Relative Suboptimality (log scale)
     ax = axes[0, 1]
     ax.semilogy(comms_dapd, rel_subopt_dapd, lw=2, label='D-APD', color='blue')
-    ax.semilogy(comms_dapdbo, rel_subopt_dapdbo, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.semilogy(comms_dapdbo, rel_subopt_dapdbo, lw=2, label='D-APDB0', color='red', linestyle='--')
     ax.semilogy(comms_aldo, rel_subopt_aldo, lw=2, label='global-DATOS', color='green', linestyle=':')
-    ax.set_title('(b) Relative Suboptimality', fontsize=12, fontweight='bold')
-    ax.set_xlabel('Number of Communications')
-    ax.set_ylabel('$|\\varphi(\\bar{x}^k) - \\varphi^*|/|\\varphi^*|$')
+    ax.set_title('(b) Relative Suboptimality', fontsize=24, fontweight='bold')
+    ax.set_xlabel('Number of Communications', fontsize=20)
+    ax.set_ylabel('$|\\varphi(\\bar{x}^k) - \\varphi^*|/|\\varphi^*|$', fontsize=24)
     ax.set_xlim(0, max_communications)
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=18)
+    ax.tick_params(axis='both', labelsize=16)
     ax.grid(True, alpha=0.3)
     
     # (0,2) Step Size Evolution
     ax = axes[0, 2]
     ax.semilogy(comms_dapd, tau_dapd_mean, lw=2, label='D-APD: $\\bar{\\tau}$', color='blue')
-    ax.semilogy(comms_dapdbo, tau_dapdbo_mean, lw=2, label='D-APDB: $\\bar{\\tau}$', color='red', linestyle='--')
+    ax.semilogy(comms_dapdbo, tau_dapdbo_mean, lw=2, label='D-APDB0: $\\bar{\\tau}$', color='red', linestyle='--')
     ax.semilogy(comms_aldo, alpha_aldo_mean, lw=2, label='global-DATOS: $\\alpha$', color='green', linestyle=':')
-    ax.set_title('(c) Step Size Evolution', fontsize=12, fontweight='bold')
-    ax.set_xlabel('Number of Communications')
-    ax.set_ylabel('Step Size')
+    ax.set_title('(c) Step Size Evolution', fontsize=24, fontweight='bold')
+    ax.set_xlabel('Number of Communications', fontsize=20)
+    ax.set_ylabel('Step Size ($\\tau$ or $\\alpha$)', fontsize=24)
     ax.set_xlim(0, max_communications)
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=18)
+    ax.tick_params(axis='both', labelsize=16)
     ax.grid(True, alpha=0.3)
     
     # (1,0) Consensus Error
     ax = axes[1, 0]
     ax.plot(comms_dapd, cons_dapd_mean, lw=2, label='D-APD', color='blue')
-    ax.plot(comms_dapdbo, cons_dapdbo_mean, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.plot(comms_dapdbo, cons_dapdbo_mean, lw=2, label='D-APDB0', color='red', linestyle='--')
     ax.plot(comms_aldo, cons_aldo_mean, lw=2, label='global-DATOS', color='green', linestyle=':')
-    ax.set_title('(d) Consensus Error', fontsize=12, fontweight='bold')
-    ax.set_xlabel('Number of Communications')
-    ax.set_ylabel('Consensus Error')
+    ax.set_title('(d) Consensus Error', fontsize=24, fontweight='bold')
+    ax.set_xlabel('Number of Communications', fontsize=20)
+    ax.set_ylabel('Consensus Error', fontsize=20)
     ax.set_xlim(0, max_communications)
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=18)
+    ax.tick_params(axis='both', labelsize=16)
     ax.grid(True, alpha=0.3)
     
     # (1,1) Relative Consensus Error (log scale)
     ax = axes[1, 1]
     ax.semilogy(comms_dapd, rel_cons_dapd, lw=2, label='D-APD', color='blue')
-    ax.semilogy(comms_dapdbo, rel_cons_dapdbo, lw=2, label='D-APDB', color='red', linestyle='--')
+    ax.semilogy(comms_dapdbo, rel_cons_dapdbo, lw=2, label='D-APDB0', color='red', linestyle='--')
     ax.semilogy(comms_aldo, rel_cons_aldo, lw=2, label='global-DATOS', color='green', linestyle=':')
-    ax.set_title('(e) Relative Consensus Error', fontsize=12, fontweight='bold')
-    ax.set_xlabel('Number of Communications')
-    ax.set_ylabel('$\\sum_i\\|x_i^k - \\bar{x}^k\\|^2/(N\\|\\bar{x}^k\\|^2)$')
+    ax.set_title('(e) Relative Consensus Error', fontsize=24, fontweight='bold')
+    ax.set_xlabel('Number of Communications', fontsize=20)
+    ax.set_ylabel('$\\sum_i\\|x_i^k - \\bar{x}^k\\|^2/(N\\|\\bar{x}^k\\|^2)$', fontsize=24)
     ax.set_xlim(0, max_communications)
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=18)
+    ax.tick_params(axis='both', labelsize=16)
     ax.grid(True, alpha=0.3)
     
     # (1,2) Backtrack Iterations
     ax = axes[1, 2]
-    ax.plot(iterations, backtrack_dapdbo_iter_mean, lw=2, label='D-APDB', color='red', linestyle='--', marker='o', markersize=3)
+    ax.plot(iterations, backtrack_dapdbo_iter_mean, lw=2, label='D-APDB0', color='red', linestyle='--', marker='o', markersize=3)
     ax.plot(iterations, backtrack_aldo_iter_mean, lw=2, label='global-DATOS', color='green', linestyle=':', marker='s', markersize=3)
-    ax.set_title(f'(f) Backtrack Iterations (First {max_iterations} iters)', fontsize=12, fontweight='bold')
+    ax.set_title('(f) Backtrack Iterations', fontsize=24, fontweight='bold')
     # ax.set_ylim(0, 5)
-    ax.set_xlabel('Iteration Number')
-    ax.set_ylabel('Total Backtrack Iters (All Nodes)')
-    ax.legend(fontsize=8)
+    ax.set_xlabel('Iteration Number', fontsize=20)
+    ax.set_ylabel('Total Backtrack Iters (All Nodes)', fontsize=20)
+    ax.legend(fontsize=18)
+    ax.tick_params(axis='both', labelsize=16)
     ax.grid(True, alpha=0.3)
     
-    # Add overall title
-    fig_combined.suptitle(f'QP with L1 Regularization: N={N}, n={n}, E={E}, $\\lambda$={lambda_l1:.4f}', 
-                          fontsize=14, fontweight='bold', y=1.02)
+    # No overall title needed
     
     plt.tight_layout()
     filename_combined = os.path.join(subfolder_path, f"{base_filename}_combined.pdf")
