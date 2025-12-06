@@ -1,6 +1,6 @@
 """
 Utility functions for distributed optimization algorithms.
-This module contains shared functions used by dapd.py, dapdb.py, and aldo.py.
+This module contains shared functions used by dapd.py, dapdb.py, and global-datos.py.
 """
 
 import numpy as np

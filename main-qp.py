@@ -16,8 +16,8 @@ dapdbo = importlib.util.module_from_spec(spec_dapdbo)
 sys.modules["dapdbo"] = dapdbo
 spec_dapdbo.loader.exec_module(dapdbo)
 
-# Import from aldo.py (has aldo_qcqp_merely_convex)
-spec_aldo = importlib.util.spec_from_file_location("aldo", "aldo.py")
+# Import from global-datos.py (has aldo_qcqp_merely_convex)
+spec_aldo = importlib.util.spec_from_file_location("aldo", "global-datos.py")
 aldo = importlib.util.module_from_spec(spec_aldo)
 sys.modules["aldo"] = aldo
 spec_aldo.loader.exec_module(aldo)
